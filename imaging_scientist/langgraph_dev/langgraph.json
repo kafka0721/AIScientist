@@ -1,0 +1,22 @@
+{
+    "dependencies": ["."],
+    "graphs": {
+        "AIScientist": "imaging_scientist.langgraph_dev.main_graph:imaging_scientist_agent",
+        "writing-agent": "imaging_scientist.langgraph_dev.graphs:writing_agent",
+        "data-analysis-agent": "imaging_scientist.langgraph_dev.graphs:data_analysis_agent",
+        "evomemory-subagent-worker": "imaging_scientist.langgraph_dev.graphs:evomemory_subagent_worker",
+        "evomemory-turn-worker": "imaging_scientist.langgraph_dev.graphs:evomemory_turn_worker",
+        "evomemory-observation-linker": "imaging_scientist.langgraph_dev.graphs:evomemory_observation_linker",
+        "evomemory-autoskills": "imaging_scientist.langgraph_dev.graphs:evomemory_autoskills"
+    },
+    "checkpointer": {
+        "backend": "custom",
+        "path": "imaging_scientist.sessions.create_checkpointer_for_langgraph_api"
+    },
+    "config": {
+        "recursion_limit": 1000000
+    },
+    "http": {
+        "app": "imaging_scientist.langgraph_dev.http:app"
+    }
+}

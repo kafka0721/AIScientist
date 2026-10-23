@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "path": "D:\\data",
+      "name": "data",
+      "addedAt": "2026-08-28T10:08:59.809Z",
+      "lastOpenedAt": "2026-08-28T11:19:13.294Z"
+    },
+    {
+      "path": "D:\\WitAIscientist\\data",
+      "name": "data",
+      "addedAt": "2026-08-28T09:48:14.292Z",
+      "lastOpenedAt": "2026-08-28T10:34:13.780Z"
+    }
+  ]
+}

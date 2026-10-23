@@ -1,0 +1,681 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Set default outline color to match brand instead of browser blue */
+  * {
+    outline-color: hsl(var(--primary));
+  }
+
+  :root {
+    /* App-specific color variables */
+    /* App-specific colors — warm "paper" palette. Light mode: ivory
+       background, true-white cards, warm charcoal text. */
+    --color-primary: #33302a;
+    --color-user-message: #93462f;
+    --color-user-message-bg: #f7e8e1;
+    --color-avatar-bg: #efe4db;
+    --color-secondary: #6b6557;
+    --color-success: #3f7a52;
+    --color-warning: #946618;
+    --color-error: #c0392b;
+    --color-background: #f5f4f0;
+    --color-subagent-hover: #efe7da;
+    --color-surface: #ffffff;
+    --color-border: #e6dfd2;
+    --color-border-light: #f0ebe1;
+    --color-text-primary: #33302a;
+    --color-text-secondary: #6b6557;
+    --color-text-tertiary: #736e60;
+    --color-file-button: #ffffff;
+    --color-file-button-hover: #f0ebe1;
+
+    /* Warm terracotta accents, with a darker fill for readable button labels. */
+    --brand: #b65b3e;
+    --brand-hover: #99472f;
+    --brand-solid: #b65b3e;
+    --brand-foreground: #ffffff;
+
+    /* deep-agents-ui base tokens. Its tailwind.config.mjs maps semantic classes
+       (text-primary, text-tertiary, text-success, text-warning, bg-secondary,
+       border-primary, the global scrollbar) to these LangSmith-style vars, but
+       the base never defined them, so those classes rendered colorless. Alias
+       them to our palette. Declared once: the var() refs resolve per-mode at the
+       use site because the referenced color tokens are overridden in .dark. */
+    --text-primary: var(--color-text-primary);
+    --text-secondary: var(--color-text-secondary);
+    --text-tertiary: var(--color-text-tertiary);
+    --text-quaternary: var(--color-text-tertiary);
+    --text-success: var(--color-success);
+    --text-warning: var(--color-warning);
+    --text-error: var(--color-error);
+    --border-primary: var(--color-border);
+    --border-secondary: var(--color-border-light);
+    --bg-primary: var(--color-background);
+    --bg-secondary: hsl(var(--secondary));
+    --scrollbar-thumb: var(--color-border);
+    --scrollbar-thumb-hover: var(--color-text-tertiary);
+
+    /* Spacing variables */
+    --spacing-xs: 0.25rem;
+    --spacing-sm: 0.5rem;
+    --spacing-md: 1rem;
+    --spacing-lg: 1.5rem;
+    --spacing-xl: 2rem;
+    --spacing-2xl: 3rem;
+
+    /* Font family variables */
+    --font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    --font-family-mono: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono",
+      Consolas, "Courier New", monospace;
+
+    /* Font size variables */
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.875rem;
+    --font-size-base: 1rem;
+    --font-size-lg: 1.125rem;
+    --font-size-xl: 1.25rem;
+    --font-size-2xl: 1.5rem;
+    --font-size-3xl: 1.875rem;
+
+    /* Font weight variables */
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+
+    /* Line height variables */
+    --line-height-tight: 1.25;
+    --line-height-normal: 1.5;
+    --line-height-relaxed: 1.75;
+
+    /* Border radius variables */
+    --radius-sm: 0.25rem;
+    --radius-md: 0.375rem;
+    --radius-lg: 0.5rem;
+    --radius-full: 9999px;
+
+    /* Shadow variables */
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+      0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+    /* Transition variables */
+    --transition-base: 200ms ease;
+
+    /* Layout variables */
+    --sidebar-width: 320px;
+    --sidebar-collapsed-width: 60px;
+    --header-height: 64px;
+    --panel-width: 40vw;
+    --chat-max-width: 900px;
+
+    /* Tailwind/Radix UI component variables */
+    --radius: 0.5rem;
+    --background: 48 20% 95%;
+    --foreground: 40 10% 18%;
+    --card: 0 0% 100%;
+    --card-foreground: 40 10% 18%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 40 10% 18%;
+    --primary: 15 49% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 40 33% 91%;
+    --secondary-foreground: 40 10% 18%;
+    --muted: 40 37% 92%;
+    --muted-foreground: 42 10% 38%;
+    --accent: 20 53% 93%;
+    --accent-foreground: 40 8% 22%;
+    --destructive: 6 63% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 39 29% 86%;
+    --input: 39 25% 80%;
+    --ring: 16 66% 61%;
+    --sidebar: 39 39% 93%;
+    --chart-1: 190 85% 28%;
+    --chart-2: 173 40% 40%;
+    --chart-3: 37 65% 54%;
+    --chart-4: 212 27% 49%;
+    --chart-5: 330 26% 48%;
+  }
+
+  /* Dark theme — applied via the `.dark` class on <html> (set by ThemeProvider
+     and the inline pre-paint script). Tailwind's darkMode: ["class", …] drives
+     `dark:` utilities off the same class, so CSS variables and utilities switch
+     together. The default theme follows the system preference. */
+  .dark {
+    /* App-specific colors — warm charcoal dark mode (the same paper identity,
+       lifted): near-black warm background, book-cloth terracotta accent. */
+    --color-primary: #ece7dc;
+    --color-user-message: #a9dce6;
+    --color-user-message-bg: #16343b;
+    --color-avatar-bg: #3a2e27;
+    --color-secondary: #ada694;
+    --color-success: #5dbe85;
+    --color-warning: #e0a94a;
+    --color-error: #e0796b;
+    --color-background: #23211d;
+    --color-subagent-hover: #3a2e27;
+    --color-surface: #2c2a25;
+    --color-border: #3a372f;
+    --color-border-light: #332f2a;
+    --color-text-primary: #ece7dc;
+    --color-text-secondary: #ada694;
+    --color-text-tertiary: #908d83;
+    --color-file-button: #2c2a25;
+    --color-file-button-hover: #332f2a;
+    --brand: #3b9cb0;
+    --brand-hover: #46a9bd;
+    /* Deep, saturated cyan fill: colorful (S~90%) but low-lightness so it
+       doesn't glow on the dark card; white text passes AA (4.82:1). */
+    --brand-solid: #087d91;
+    --brand-foreground: #ffffff;
+
+    /* Tailwind/Radix UI component variables for dark mode */
+    --radius: 0.5rem;
+    --background: 40 9% 13%;
+    --foreground: 41 30% 89%;
+    --card: 43 9% 16%;
+    --card-foreground: 41 30% 89%;
+    --popover: 43 9% 16%;
+    --popover-foreground: 41 30% 89%;
+    --primary: 189 90% 30%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 33 10% 18%;
+    --secondary-foreground: 41 30% 89%;
+    --muted: 38 10% 16%;
+    --muted-foreground: 43 13% 63%;
+    --accent: 196 14% 20%;
+    --accent-foreground: 41 30% 89%;
+    --destructive: 7 65% 65%;
+    --destructive-foreground: 30 13% 12%;
+    --border: 44 10% 21%;
+    --input: 44 10% 21%;
+    --ring: 190 50% 46%;
+    --sidebar: 36 9% 11%;
+    --chart-1: 190 52% 50%;
+    --chart-2: 173 39% 54%;
+    --chart-3: 40 68% 62%;
+    --chart-4: 215 37% 63%;
+    --chart-5: 332 39% 64%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+button,
+a {
+  touch-action: manipulation;
+}
+
+html,
+body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-text-primary);
+}
+
+h1 {
+  font-size: 1.875rem;
+}
+h2 {
+  font-size: 1.5rem;
+}
+h3 {
+  font-size: 1.25rem;
+}
+h4 {
+  font-size: 1.125rem;
+}
+h5 {
+  font-size: 1rem;
+}
+h6 {
+  font-size: 0.875rem;
+}
+
+p {
+  margin-bottom: 1rem;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+  transition: opacity 200ms ease;
+
+  &:hover {
+    opacity: 0.8;
+  }
+}
+
+code {
+  font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas,
+    "Courier New", monospace;
+  font-size: 0.9em;
+  padding: 0.125em 0.25em;
+  background-color: var(--color-surface);
+  border-radius: 0.25rem;
+}
+
+pre {
+  font-family: "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas,
+    "Courier New", monospace;
+  font-size: 0.875rem;
+  line-height: 1.75;
+  padding: 1rem;
+  background-color: var(--color-surface);
+  border-radius: 0.375rem;
+  overflow-x: auto;
+
+  code {
+    padding: 0;
+    background-color: transparent;
+  }
+}
+
+ul,
+ol {
+  padding-left: 1.5rem;
+  margin-bottom: 1rem;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+li {
+  margin-bottom: 0.25rem;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  border: none;
+  background: none;
+  cursor: pointer;
+
+  &:disabled {
+    cursor: not-allowed;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Optimization Window animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Custom scrollbar styles */
+.scrollbar-pretty {
+  overflow-y: scroll;
+}
+
+.scrollbar-pretty::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollbar-pretty::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-pretty::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border));
+  border-radius: 9999px;
+}
+
+.scrollbar-pretty::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.6);
+}
+
+/* KaTeX can produce very wide display equations; keep chat layouts bounded on
+   narrow screens while preserving horizontal scroll for the formula itself. */
+.katex {
+  color: inherit;
+}
+
+.katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+
+/* Warm light research workbench; serif Auto typography follows the reference. */
+.science-workbench {
+  --color-background: #f5f4f0;
+  --color-surface: #fffefa;
+  --color-border: #e2dfd8;
+  --color-border-light: #ece9e3;
+  --color-text-primary: #3d3933;
+  --color-text-secondary: #706b63;
+  --color-text-tertiary: #827c73;
+  --brand: #b65b3e;
+  --brand-hover: #99472f;
+  --brand-solid: #b65b3e;
+  --brand-foreground: #ffffff;
+  --background: 48 20% 95%;
+  --foreground: 36 9% 22%;
+  --card: 48 100% 99%;
+  --card-foreground: 36 9% 22%;
+  --popover: 48 100% 99%;
+  --popover-foreground: 36 9% 22%;
+  --primary: 15 49% 48%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 40 17% 93%;
+  --secondary-foreground: 36 9% 22%;
+  --muted: 40 17% 93%;
+  --muted-foreground: 37 6% 41%;
+  --accent: 20 53% 93%;
+  --accent-foreground: 15 49% 35%;
+  --border: 42 15% 87%;
+  --input: 38 15% 82%;
+  --ring: 16 66% 61%;
+  --sidebar: 40 17% 94%;
+  --radius: 0.75rem;
+  --composer-background: #f5f4f0;
+  --composer-footer: #f1f0ec;
+  --composer-outline: #edb9a8;
+  --composer-glow: #f7dfd5;
+  --composer-blue: #91bce0;
+  --composer-blue-glow: rgb(125 180 225 / 18%);
+  font-family: Georgia, "Times New Roman", "Songti SC", "Noto Serif CJK SC",
+    SimSun, serif;
+}
+
+.dark .science-workbench {
+  --color-background: #171717;
+  --color-surface: #1f1f1e;
+  --color-border: #353534;
+  --color-border-light: #2b2b2a;
+  --color-text-primary: #f5f5f3;
+  --color-text-secondary: #a3a29e;
+  --color-text-tertiary: #807f7b;
+  --brand: #e5a18a;
+  --brand-hover: #f2b59f;
+  --brand-solid: #b65b3e;
+  --brand-foreground: #ffffff;
+  --composer-background: #272522;
+  --composer-footer: #24221f;
+  --composer-outline: #80513f;
+  --composer-glow: #422f27;
+  --composer-blue: #5e8bb0;
+  --composer-blue-glow: rgb(83 143 192 / 20%);
+  --background: 0 0% 9%;
+  --foreground: 60 9% 96%;
+  --card: 60 2% 12%;
+  --card-foreground: 60 9% 96%;
+  --popover: 60 2% 12%;
+  --popover-foreground: 60 9% 96%;
+  --primary: 15 49% 48%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 2% 15%;
+  --secondary-foreground: 60 9% 96%;
+  --muted: 60 2% 15%;
+  --muted-foreground: 60 3% 63%;
+  --accent: 60 2% 17%;
+  --accent-foreground: 60 9% 96%;
+  --border: 60 1% 21%;
+  --input: 60 1% 24%;
+  --ring: 16 66% 61%;
+  --sidebar: 0 0% 7%;
+}
+
+.katex-display > .katex {
+  max-width: 100%;
+}
+
+.chat-empty-greeting {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+  color: var(--color-text-primary);
+}
+
+/* Reference-style composer: generous writing area, quiet tools, model at right. */
+.research-composer {
+  border: 1px solid var(--composer-blue, #91bce0);
+  border-radius: 22px;
+  background: var(--composer-background, #f5f4f0);
+  box-shadow: 0 0 0 3px var(--composer-glow, #f7dfd5),
+    0 0 16px 3px var(--composer-blue-glow, rgb(125 180 225 / 18%));
+  transition: box-shadow 180ms ease;
+}
+
+.research-composer:focus-within {
+  box-shadow: 0 0 0 4px var(--composer-glow, #f7dfd5),
+    0 0 20px 5px var(--composer-blue-glow, rgb(125 180 225 / 18%));
+}
+
+.research-composer-input {
+  min-height: 122px;
+  max-height: min(280px, 35dvh);
+  padding: 22px 25px 16px;
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1.65;
+  box-shadow: none !important;
+}
+
+.research-composer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 16px;
+  border-top: 1px solid var(--color-border-light);
+  background: var(--composer-footer, #f1f0ec);
+}
+
+.research-composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 7px;
+  border-radius: 14px;
+  background: var(--color-surface);
+}
+
+.research-composer-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--color-text-secondary);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.research-composer-tool:hover:not(:disabled),
+.research-composer-tool[aria-pressed="true"] {
+  color: var(--brand);
+  background: hsl(var(--accent));
+}
+
+.research-composer-tool:disabled { opacity: 0.4; }
+.research-composer-tool:focus-visible,
+.research-composer-model:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+.research-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.research-composer-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  max-width: 420px;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  font-size: 15px;
+}
+
+.research-composer-model:hover { border-color: var(--composer-outline); }
+.research-composer-provider {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 145px;
+  border-radius: 5px;
+  padding: 2px 6px;
+  background: hsl(var(--muted));
+  font-size: 13px;
+}
+
+.research-composer-send {
+  height: 42px;
+  flex-shrink: 0;
+  padding: 0 17px;
+  border-radius: 12px;
+  gap: 9px;
+}
+
+.research-composer-send:disabled {
+  opacity: 1;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-light);
+}
+
+@media (max-width: 640px) {
+  .research-composer-input { min-height: 100px; padding: 16px; font-size: 16px; }
+  .research-composer-footer { padding: 9px; gap: 8px; }
+  .research-composer-tools { padding: 3px; gap: 0; }
+  .research-composer-tool { width: 32px; height: 34px; }
+  .research-composer-provider { display: none; }
+  .research-composer-model { max-width: 180px; padding: 0 8px; gap: 5px; font-size: 13px; }
+  .research-composer-actions { gap: 6px; }
+  .research-composer-send { padding: 0 11px; }
+}
+
+/* Global diff highlighting styles */
+.word-added {
+  background-color: rgba(46, 160, 67, 0.4);
+  color: #ffffff;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.word-removed {
+  background-color: rgba(248, 81, 73, 0.4);
+  color: #ffffff;
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-decoration: line-through;
+  text-decoration-color: #f85149;
+}
+
+/* Model picker: explicit sizing avoids grid min-content widening and clipping. */
+.model-picker-dialog {
+  width: min(880px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 28px;
+  gap: 20px;
+}
+.model-picker-body { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 3px; }
+.model-picker-body > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.model-picker-list { margin: 0; list-style: none; }
+.model-picker-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 260px); align-items: center; gap: 16px; }
+.model-picker-provider { text-align: right; }
+@media (max-width: 600px) {
+  .model-picker-dialog { padding: 20px; gap: 16px; }
+  .model-picker-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .model-picker-provider { text-align: left; }
+}

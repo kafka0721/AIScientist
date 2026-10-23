@@ -1,0 +1,758 @@
+# Imaging Scientist
+
+本地版本已更名：Python 包为 `imaging_scientist`，命令为 `imaging-scientist`。
+现有 Windows 安装继续使用 `start-webui.bat`；从源码安装使用 `pip install -e .`。
+新名称尚未发布到 PyPI，下文保留的上游链接仅用于来源追溯。
+详见[改名与兼容说明](docs/imaging-scientist-rename.md)。
+
+ > [!WARNING]
+ > 这是社区翻译版本，欢迎修正！
+
+---
+
+<div align="center">
+    <picture>
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/logo-dark.svg">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/logo-light.svg">
+      <img alt="imaging_scientist Logo" src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/logo-dark.svg" width="80%">
+    </picture>
+</div>
+
+<div align="center">
+<a href="https://pypi.org/project/WitAIScientist/"><picture>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-pypi-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-pypi-dark.svg">
+  <img alt="PyPI v0.2.1" src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-pypi-light.svg" height="28">
+</picture></a><a href="https://WitAIScientist.github.io/"><picture>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-website-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-website-dark.svg">
+  <img alt="Website" src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-website-light.svg" height="28">
+</picture></a><a href="https://github.com/langchain-ai/deepagents"><picture>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-framework-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-framework-dark.svg">
+  <img alt="Framework DeepAgents" src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-framework-light.svg" height="28">
+</picture></a><a href="https://github.com/WitAIScientist/WitAIScientist/blob/main/LICENSE"><picture>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-license-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-license-dark.svg">
+  <img alt="License Apache 2.0" src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/badge-license-light.svg" height="28">
+</picture></a>
+</div>
+
+---
+
+<div align="center">
+<a href="https://github.com/WitAIScientist/WitAIScientist"><img src="https://readme-typing-svg.demolab.com?font=Sans-Serif&pause=1000&color=64B5F6&center=true&vCenter=true&width=435&lines=Towards+Self-Evolving+AI+Scientists;Harness+Vibe+Research" alt="Typing SVG" /></a>
+</div>
+
+<div align="center">
+
+**[English](./README.md) | 简体中文**
+
+
+
+</div>
+
+**imaging_scientist 旨在通过构建自我进化的 AI 科学家来驱动 Vibe Research——让 AI 自主探索、生成洞见并持续迭代优化。
+它以开箱即用为设计理念，提供一个伴随智能体技能、工具集和记忆库共同成长的活跃研究系统。
+imaging_scientist 超越了传统的人在回路（Human-in-the-Loop）模式，采用人在环上（Human-on-the-Loop）范式——AI 作为研究伙伴，与人类研究者共同进化，逐步内化学术品味与科学判断力。**
+
+<h3>🏆 荣誉与认可</h3>
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="33%">
+      <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/ICAIS_awards.JPG" height="180" alt="ICAIS 2025 Awards"/>
+      <br />
+      <sub><b>最佳论文与评审奖</b></sub>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/ICAIS_best_paper.png" height="180" alt="Best Paper"/>
+      <br />
+      <sub><b>AI 生成最佳论文</b></sub>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/deepresearch_bench_2.png" height="180" alt="DeepResearch Bench II #1"/>
+      <br />
+      <sub><b>DeepResearch Bench II 第一名</b></sub>
+    </td>
+  </tr>
+</table>
+
+<br />
+
+<table>
+  <tr>
+    <td align="center" valign="top" width="33%">
+      <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/DeepResearch_Bench.png" height="180" alt="DeepResearch Bench #1"/>
+      <br />
+      <sub><b>DeepResearch Bench 第一名</b></sub>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/asta_bench_code.png" height="180" alt="AstaBench Code & Execution #1"/>
+      <br />
+      <sub><b>AstaBench 代码与执行榜第一名</b></sub>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/asta_bench_data.png" height="180" alt="AstaBench Data Analysis #1"/>
+      <br />
+      <sub><b>AstaBench 数据分析榜第一名</b></sub>
+    </td>
+  </tr>
+</table>
+
+<h3>⚡ 统一入口，多端体验</h3>
+
+<table>
+  <tr>
+    <th><p align="center">🌐 Desktop WebUI</p></th>
+  </tr>
+  <tr>
+    <td align="center">
+      <video src="https://github.com/user-attachments/assets/b977f2d5-488a-428d-9c02-b6b27c1521f8" autoplay loop muted playsinline width="100%">
+        <a href="https://github.com/user-attachments/assets/b977f2d5-488a-428d-9c02-b6b27c1521f8">观看 WebUI 演示</a>
+      </video>
+    </td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th width="75%"><p align="center">🖥️ CLI / TUI</p></th>
+    <th width="25%"><p align="center">📱 移动端</p></th>
+  </tr>
+  <tr>
+    <td align="center">
+      <video src="https://github.com/user-attachments/assets/a40ba429-bb07-4663-b5b1-77aed1a833b9" autoplay loop muted playsinline width="100%">
+        <a href="https://github.com/user-attachments/assets/a40ba429-bb07-4663-b5b1-77aed1a833b9">观看演示视频</a>
+      </video>
+    </td>
+    <td align="center">
+      <video src="https://github.com/user-attachments/assets/4919e6f4-e434-46c9-98c7-35d7482868a6" width="100%" autoplay loop muted playsinline>
+        <a href="https://github.com/user-attachments/assets/4919e6f4-e434-46c9-98c7-35d7482868a6">观看移动端演示</a>
+      </video>
+    </td>
+  </tr>
+</table>
+
+## ✨ 特性
+
+- **🤖 多智能体协作** — 6 个子智能体（规划、调研、编码、调试、分析、写作）协同工作。
+- **🧠 自进化记忆** — 每轮自动提炼并连成知识图谱，跨会话持续进化。
+- **🛠️ AutoSkills 自建技能** — 定期从自身记忆中提炼重复模式，起草为可复用技能——通过 `/autoskills` 供你审核。
+- **🌐 多模型供应商** — Anthropic、OpenAI、Google、MiniMax、NVIDIA——一处配置，随时切换。
+- **📱 多渠道接入** — CLI 为中心；Telegram、Slack、飞书、微信等——共享同一智能体会话。
+- **🖥️ Desktop WebUI** — 单终端 `--ui webui` 启动带工作区面板的 Web 应用。
+- **🔬 科学工作流** — 需求采集 → 规划 → 执行 → 评估 → 撰写 → 验证。
+- **🔄 代码生成模式** — More Effort（迭代精修），持续迭代提升代码生成质量。
+- **⚡ 自适应工具** — 每轮对话智能筛选相关工具，减少干扰提升效率。
+- **✂️ 上下文编辑** — 根据对话状态动态改写系统提示词。
+- **🔌 MCP 与 Skills** — 即插即用 MCP 服务器，或从 GitHub 一键安装技能包。
+
+> [!TIP]
+> 寻找开箱即用的研究技能？查看 [**EvoSkills**](https://github.com/EvoScientist/EvoSkills) — 由 **imaging_scientist** 引擎驱动，结合可安装技能，端到端研究全流程一步到位。EvoSkills 同样兼容各类 CLI 编程智能体。
+
+## 🔥 动态
+
+- **[2026 年 6 月 3 日]** 在 [ResearchClawBench](https://github.com/InternScience/ResearchClawBench)（Agent 模式）中，🥈 总体排名第 2 —— 同时 🥇 在基于 `GPT-5.4` 的智能体中排名第 1！[**排行榜**](https://internscience.github.io/ResearchClawBench-Home/) 👈
+- **[2026 年 4 月 18 日]** 🥇 提交时在 [DeepResearch Bench](https://deepresearch-bench.github.io/) 排名第一！[**排行榜**](https://huggingface.co/spaces/muset-ai/DeepResearch-Bench-Leaderboard) 👈
+- **[2026 年 4 月 13 日]** 🥇 再度登顶！提交时在 [DeepResearch Bench II](https://agentresearchlab.com/benchmarks/deepresearch-bench-ii/index.html#leaderboard) 重回第一！[**排行榜**](https://agentresearchlab.com/benchmarks/deepresearch-bench-ii/index.html#leaderboard) 👈
+- **[2026 年 3 月 26 日]** 🥇 提交时在 [AstaBench 数据分析](https://allenai-asta-bench-leaderboard.hf.space/home) 排名第一！[**排行榜**](https://allenai-asta-bench-leaderboard.hf.space/data-analysis) 👈
+- **[2026 年 3 月 25 日]** 🥇 提交时在 [AstaBench 代码与执行](https://allenai-asta-bench-leaderboard.hf.space/home) 排名第一！[**排行榜**](https://allenai-asta-bench-leaderboard.hf.space/code-execution) 👈
+- **[2026 年 3 月 13 日]** 🚀 [**imaging_scientist**](https://github.com/WitAIScientist/WitAIScientist) 正式亮相！
+- **[2026 年 3 月 11 日]** ⛳ 技术报告已上线！[**查看详情**](https://arxiv.org/abs/2603.08127) 👈
+- **[2026 年 3 月 6 日]** 🥇 提交时在 [DeepResearch Bench II](https://agentresearchlab.com/benchmarks/deepresearch-bench-ii/index.html#leaderboard) 排名第一！[**排行榜**](https://agentresearchlab.com/benchmarks/deepresearch-bench-ii/index.html#leaderboard) 👈
+- **[2025 年 11 月 24 日]** 🏆 [ICAIS 2025](https://icais.ai/) AI Scientist Track 6/6 全部中稿 — Best Paper & AI Reviewer's Appraisal Award！[**详情**](https://airaxiv.com/papers/?q=zacharyzhang2022%40gmail.com) 👈
+
+<details>
+<summary>📦 版本更新摘要（changelog）</summary>
+
+- **[2026 年 7 月 5 日]** **[v0.2.1](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.2.1)** — AutoSkills：EvoMemory 从自身的观察记录聚类中起草可复用技能，供你用 `/autoskills` 审核；新增面向无头 / SDK 客户端的 `--output-format stream-json`；更丰富的斜杠命令补全；修复 Windows UTF-8 配置读取；TUI 欢迎横幅修复；langchain-openrouter 升级到 0.2.5。
+- **[2026 年 6 月 26 日]** **[v0.2.0](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.2.0)** — 记忆自连成图：将观察记录连成知识图谱（互补 / 矛盾 / 取代）；新增只读 `GET /api/models` 端点，供 WebUI 模型选择器使用。
+- **[2026 年 6 月 23 日]** **[v0.1.9](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.9)** — 新安装热修复：deepagents 0.6.11 / langchain-quickjs 0.3 将 `task` 保留为 REPL 全局后,首次对话即崩溃（`The subagent `task` tool cannot be exposed via `ptc``）。从 code-interpreter 的 PTC 白名单移除 `task`（`task()` 仍作为 REPL 全局可用,异步分发工具继续保留在 PTC 中），并将 deepagents pin 升级到 `~=0.6.11`。
+- **[2026 年 6 月 22 日]** **[v0.1.8](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.8)** — LangGraph gateway 层：CLI / TUI / serve / channel 共用、UI 无关的图与线程访问；OpenRouter Anthropic prompt caching **默认开启**（通过 `openrouter_anthropic_prompt_cache=false` 关闭）；命令名互为前缀时 Enter 现在能正确提交斜杠命令；pre-commit ruff 升级。
+- **[2026 年 6 月 16 日]** **[v0.1.7](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.7)** — 记忆检索：agent 在每个任务开始前对历史 observation 做 preflight 检索（`search_observations` 关键词排序检索 + `read_memory`）；多级斜杠命令补全（带子命令感知）；Windows 稳定性修复（async MCP 工具执行 + 中断后图状态恢复、`cmd.exe` 路径转义）；含空格的虚拟路径处理；deepagents 0.6.10。
+- **[2026 年 6 月 11 日]** **[v0.1.6](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.6)** — 会话持久化修复：重启后 WebUI / `langgraph dev` 线程不再丢失（SQLite checkpoint + 线程恢复作用域控制）、memory worker checkpoint 自动清理（完成即删 + 启动时清扫残留）、`/threads` 与 resume 提示改用短线程 ID。
+- **[2026 年 6 月 11 日]** **[v0.1.5](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.5)** — Dangerous 模式（带安全检查的真实文件系统访问）、LangGraph streaming v3 流水线、OpenRouter Anthropic prompt caching（可选启用）、claude-fable-5、TUI 自由滚动、Windows CI 支持，以及 `ImagingSci deploy` 公网 Cloudflare 隧道（`--tunnel`）。
+- **[2026 年 6 月 7 日]** **[v0.1.4](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.4)** — 辅助模型（后台任务与工具选择）、observation 记忆生命周期、Qwen3.7-Max/Plus（DashScope）、UI 后端选择，以及 OpenRouter 多轮推理修复。
+- **[2026 年 6 月 3 日]** **[v0.1.3](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.3)** — 多模态处理（图片 + PDF/文档 flatten/hoisting、纯文本模型回退）、runtime-context 中间件、memory 中间件迁移至 profile 文件 + stream 时间线叙述、textual 中文输入修复。
+- **[2026 年 6 月 2 日]** **[v0.1.2](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.2)** — 浏览器 WebUI 模式（beta）、`ImagingSci deploy` 独立 LangGraph 服务器、默认模型 → claude-sonnet-4-6、MiniMax M3，以及 sandbox 超时与 async-notifier 渠道路由修复。
+- **[2026 年 5 月 19 日]** **[v0.1.1](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.1)** — deepagents 0.6.2 DeltaChannel 升级、tier-aware skill mounts、状态/耗时栏、QQ 内联按钮。
+- **[2026 年 5 月 8 日]** **[v0.1.0](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.1.0)** — 异步子智能体（langgraph dev）、官方 Docker 镜像、个人微信、sessions DB 压缩。
+- **[2026 年 4 月 26 日]** **[v0.0.9](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.9)** — 启动加速、会话内换模型、统一斜杠命令、DeepSeek V4 thinking 修复。
+- **[2026 年 4 月 21 日]** **[v0.0.8](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.8)** — 统一数据目录、状态栏、增强 ask-user & auto-mode。
+- **[2026 年 4 月 10 日]** **[v0.0.7](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.7)** — 全局 skills 目录、Moonshot/Kimi 供应商、ccproxy 修复、渠道改进。
+- **[2026 年 4 月 3 日]** **[v0.0.6](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.6)** — 动态上下文管理、OpenRouter reasoning、More Effort 模式、GLM-5.1。
+- **[2026 年 3 月 27 日]** **[v0.0.5](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.5)** — 上下文重试中间件、OpenAI relay 配置、飞书事件循环修复、`/compact`。
+- **[2026 年 3 月 24 日]** **[v0.0.4](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.4)** — `@file` 引用、resume 历史、飞书 WebSocket、LaTeX 安装。
+- **[2026 年 3 月 20 日]** **[v0.0.3](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.3)** — 语音输入（STT）、MiniMax/DeepSeek 供应商、MCP & skill 浏览器。
+- **[2026 年 3 月 17 日]** **[v0.0.2](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.2)** — OAuth 登录、human-in-the-loop & `ask_user`、headless serve。
+- **[2026 年 3 月 13 日]** **[v0.0.1](https://github.com/WitAIScientist/WitAIScientist/releases/tag/v0.0.1)** — 首个公开版本——自进化 AI Scientist。
+
+</details>
+
+## 📖 目录
+
+- [📦 安装](#-安装)
+- [🔑 配置](#-配置)
+- [⚡ 快速上手](#-快速上手)
+- [🍪 示例与实践](#-示例与实践)
+- [🔌 MCP 集成](#-mcp-集成)
+- [📱 渠道接入](#-渠道接入)
+- [📚 致谢](#-致谢)
+- [🎯 路线图](#-ᯓ-路线图)
+- [🌍 项目角色](#-项目角色)
+- [🤝 贡献](#-贡献)
+- [📝 引用](#-引用)
+
+## 📦 安装
+
+> [!TIP]
+> 需要 **Python 3.11+**（**< 3.14**）。推荐使用 [**uv**](https://docs.astral.sh/uv/) 或 **conda** 进行依赖管理和虚拟环境管理。想完全跳过本地 Python 安装？直接跳转到 [🐳 Docker](#-docker)。
+
+<details>
+<summary>🪛 安装 uv（如果尚未安装）</summary>
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+</details>
+
+### 快速安装
+
+```bash
+uv tool install imaging_scientist
+```
+
+> [!NOTE]
+> 更新已安装的版本到最新，请使用 `uv tool upgrade`：
+> ```bash
+> uv tool upgrade imaging_scientist
+> ```
+
+或安装到当前环境：
+
+```bash
+uv pip install imaging_scientist
+```
+
+### 从 GitHub 安装最新版本
+
+获取 [PyPI](https://pypi.org/project/WitAIScientist/) 发布前的最新补丁：
+
+```bash
+uv pip install git+https://github.com/WitAIScientist/WitAIScientist.git
+```
+
+### 开发安装
+
+```bash
+git clone https://github.com/WitAIScientist/WitAIScientist.git
+cd imaging_scientist
+uv sync --dev
+```
+
+enable pre-commit hooks:
+```bash
+uv run pre-commit install
+```
+
+<details>
+<summary> 使用 conda</summary>
+
+```bash
+conda create -n ImagingSci python=3.11 -y
+conda activate ImagingSci
+pip install -e ".[dev]"
+```
+
+</details>
+
+<details>
+<summary> 使用 PyPi</summary>
+
+```bash
+pip install imaging_scientist          # quick install
+pip install -e ".[dev]"           # development install
+```
+
+</details>
+
+<details>
+<summary> 可选：渠道依赖</summary>
+
+消息渠道集成需要额外依赖，按需安装即可：
+
+```bash
+uv pip install "imaging_scientist[telegram]"     # Telegram
+uv pip install "imaging_scientist[discord]"      # Discord
+uv pip install "imaging_scientist[slack]"        # Slack
+uv pip install "imaging_scientist[wechat]"       # 微信
+uv pip install "imaging_scientist[qq]"           # QQ
+uv pip install "imaging_scientist[feishu]"       # 飞书
+uv pip install "imaging_scientist[all-channels]" # 全部
+```
+
+</details>
+
+<details>
+<summary> 升级到最新代码库</summary>
+
+```bash
+git pull && uv sync --dev
+```
+
+</details>
+
+### 🐳 Docker
+
+我们在 [GitHub Container Registry](https://github.com/WitAIScientist/WitAIScientist/pkgs/container/witaiscientist) 上发布了一份预构建镜像，已经包含 `imaging-sci onboard` 通常会为你安装的所有内容：
+
+- Python 3.11、imaging_scientist 以及全部跨平台消息渠道（即 `imaging_scientist[all-channels]`）
+- **`uv`** —— 用于 MCP 注册表按需安装 Python 类 MCP 服务器
+- **Node.js 24 LTS + `npx`** —— 大多数 MCP 服务器依赖此运行时
+
+容器中**无法使用 iMessage 渠道**——它需要 `imsg` CLI 与 macOS 的 Messages.app 通信，仅限宿主操作系统。如需 iMessage，请直接在 macOS 上运行 imaging_scientist。
+
+在容器中运行 imaging_scientist 还会**沙箱化智能体的 Shell 访问**——文件编辑和 Shell 命令仅限于你显式挂载的卷。
+
+```bash
+docker run -it --rm \
+  --env-file .env \
+  -v "$(pwd)/workspace:/workspace" \
+  -v witaisci-data:/home/witaisci/.witaiscientist \
+  ghcr.io/witaiscientist/witaiscientist:latest
+```
+
+各挂载的用途：
+
+| 挂载 | 用途 |
+| --- | --- |
+| `--env-file .env` | API 密钥（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY` 等） |
+| `./workspace:/workspace` | 智能体的工作目录 |
+| `witaisci-data:/home/witaisci/.witaiscientist` | 持久化应用状态：会话数据库、全局技能、记忆，以及 `config.yaml` / `mcp.yaml` |
+
+> [!IMPORTANT]
+> 镜像以非 root 用户运行（`imaging-sci`，UID `1000`）。`./workspace` bind 挂载的宿主目录必须可被该 UID 写入。如果你的宿主用户 ID 不同，可以一次性 `chown -R 1000:1000 ./workspace`，或在每次 `docker run` 时加上 `--user "$(id -u):$(id -g)"`，让容器使用你的 UID。
+
+也可使用 `docker compose`（仓库自带一个起步用的 [`docker-compose.yml`](./docker-compose.yml)）：
+
+```bash
+docker compose run --rm witaiscientist
+```
+
+如果想本地构建而不是拉取镜像：
+
+```bash
+docker build -t witaiscientist:dev .
+```
+
+> [!NOTE]
+> 镜像中**未捆绑**以下内容，需要时基于镜像派生安装：
+> - **`stt`**（基于 `faster-whisper` 的语音转文字）和 **`oauth`**（`ccproxy-api`）
+> - **TinyTeX / LaTeX**（`pdflatex`、`latexmk`），供论文写作类技能使用
+>
+> ```dockerfile
+> FROM ghcr.io/witaiscientist/witaiscientist:latest
+>
+> # Python 额外组件
+> USER root
+> RUN uv pip install --python /opt/venv/bin/python "imaging_scientist[stt,oauth]"
+> USER imaging-sci
+>
+> # TinyTeX
+> # 官方安装方式是 `curl | sh`；如果你不想把未固定版本的远程脚本
+> # 直接管入 shell，可以从 https://github.com/rstudio/tinytex-releases
+> # 下载特定版本的 TinyTeX 发布包，校验校验和后解压到
+> # /home/witaisci/.TinyTeX。
+> RUN curl -sL https://yihui.org/tinytex/install-bin-unix.sh | sh \
+>  && /home/witaisci/.TinyTeX/bin/*/tlmgr install latexmk
+> ```
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 🔑 配置
+
+最简单的方式是使用交互式配置向导：
+
+```bash
+ImagingSci onboard
+```
+
+> [!TIP]
+> 向导将引导你完成供应商选择、密钥验证、模型选择和工作区模式设置。
+> 支持 CLI 编程智能体订阅用户通过 OAuth 直连——无需 API Key。
+
+![onboard](https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/WitAIScientist_onboard.png)
+
+<details>
+<summary> 📟 通过环境变量手动配置</summary>
+
+至少设置一个 LLM 供应商密钥，搜索密钥为可选项：
+
+```bash
+# 选择一个 LLM 供应商
+export ANTHROPIC_API_KEY="sk-..."   # Claude  — console.anthropic.com
+export OPENAI_API_KEY="sk-..."      # GPT    — platform.openai.com
+export GOOGLE_API_KEY="AI..."       # Gemini  — aistudio.google.com/api-keys
+export MINIMAX_API_KEY="sk-..."     # MiniMax — platform.minimaxi.com（默认，中国大陆）或 platform.minimax.io（国际版）
+export MINIMAX_BASE_URL="https://api.minimax.io/anthropic"  # 仅国际版需要设置（默认: https://api.minimaxi.com/anthropic）
+export NVIDIA_API_KEY="nvapi-..."   # NIM    — build.nvidia.com
+
+# 网络搜索（可选）
+export TAVILY_API_KEY="tvly-..."    # app.tavily.com
+```
+
+也可以使用 `ImagingSci config set` 将密钥持久化到 `~/.config/witaiscientist/config.yaml`。
+
+或者复制示例 `.env` 文件用于项目级配置：
+
+```bash
+cp .env.example .env  # 填入你的密钥
+```
+
+> ⚠️ 切勿将包含真实密钥的 `.env` 文件提交到版本库。该文件已在 `.gitignore` 中。
+
+</details>
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## ⚡ 快速上手
+
+```bash
+ImagingSci  # 或 imaging_scientist — 交互模式（默认 TUI）
+```
+
+![demo](https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/WitAIScientist_cli.png)
+
+> 运行 `ImagingSci -h` 查看全部 CLI 选项。
+
+![cli help](https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/WitAIScientist_cli_help.png)
+
+> [!TIP]
+> 想用浏览器？运行 `ImagingSci --ui webui` 打开 Web 工作区界面。需要复制长输出？使用 `--ui cli` 切换到经典模式，即可使用终端原生复制。macOS [iTerm2](https://iterm2.com/) 用户也可以按住 `⌥ Option` 拖选文字，再 `⌘+C` 复制。
+
+<details>
+<summary>常用示例</summary>
+
+```bash
+ImagingSci                            # 交互模式（默认 TUI）
+ImagingSci -p "你的问题"              # 单次查询模式
+ImagingSci --workdir /path/to/project # 在指定目录下启动
+ImagingSci -m run                     # 隔离的会话级工作区
+ImagingSci --ui cli                   # 经典 CLI（轻量）
+ImagingSci --ui webui                 # 浏览器工作区界面（需 Node/npx）
+ImagingSci serve                      # 无头模式——仅渠道，无交互提示符
+ImagingSci deploy                     # 独立 LangGraph 服务器——供外部 UI / SDK 客户端使用
+```
+
+</details>
+
+<details>
+<summary>Desktop WebUI</summary>
+
+将 UI 后端设为 `webui`，全新的 `ImagingSci` 会话便会在单个终端里同时启动 deploy 式 LangGraph 服务器**和** [`@witaiscientist/webui`](https://www.npmjs.com/package/@witaiscientist/webui) 前端，无需管理第二个进程：
+
+```bash
+ImagingSci config set ui_backend webui   # 持久化；或用 `ImagingSci --ui webui` 临时启用
+ImagingSci                               # 打开 http://localhost:4716
+ImagingSci config set webui_port 4800    # 修改前端端口（须与 langgraph dev 端口不同）
+```
+
+需要 **Node.js 24 LTS**（提供 `npx`）；首次启动会下载 `@witaiscientist/webui`，需要联网。注意：WebUI 不会显示 CLI/TUI 的历史会话，且 `-p` / `--resume` 会回退到经典 CLI。
+
+</details>
+
+<details>
+<summary>操作审批</summary>
+
+默认情况下，Shell 命令（`execute` 工具）执行前需要人工审批。跳过审批提示的方式：
+
+```bash
+# 单次会话：通过 CLI 参数启用自动审批
+ImagingSci --auto-approve
+ImagingSci -p "query" --auto-approve
+
+# 持久化：写入配置（对所有后续会话生效）
+ImagingSci config set auto_approve true
+
+# 或仅放行特定命令前缀
+ImagingSci config set shell_allow_list "python,pip,pytest,ruff,git"
+```
+
+会话中也可以在审批提示时回复 **3**（Approve all），仅对当次会话自动审批后续所有操作。
+
+> [!CAUTION]
+> **危险模式（Dangerous mode）** 会完全解除工作区沙箱——智能体可以读写、删除**真实文件系统上任意位置**的文件（`sudo`/`rm -rf /` 等高危命令仍被拦截）。它隐含 `--auto-approve`（不再提示审批）。请仅在你完全信任该任务时使用。
+>
+> ```bash
+> ImagingSci --dangerous                       # 单次会话
+> ImagingSci config set dangerous_mode true    # 持久化
+> ```
+
+</details>
+
+<details>
+<summary>智能体提问</summary>
+
+智能体可以在需要澄清时主动向你提问（例如数据集选择、实验方向等）。此功能默认开启。关闭方式：
+
+```bash
+# 持久化：写入配置
+ImagingSci config set enable_ask_user false
+
+# 重新开启
+ImagingSci config set enable_ask_user true
+```
+
+</details>
+
+<details>
+<summary>会话内命令</summary>
+
+| 命令 | 说明 |
+| ---- | ---- |
+| `/current` | 显示当前会话信息 |
+| `/threads` | 列出最近的会话 |
+| `/resume` | 恢复之前的会话 |
+| `/delete` | 删除已保存的会话 |
+| `/new` | 开始新会话 |
+| `/clear` | 清除聊天记录 |
+| `/skills` | 列出已安装的技能包 |
+| `/install-skill <src>` | 从本地路径或 GitHub 安装技能包 |
+| `/uninstall-skill <name>` | 卸载已安装的技能包 |
+| `/mcp` | 管理 MCP 服务器 |
+| `/channel` | 配置消息渠道 |
+| `/help` | 显示可用命令 |
+| `/exit` | 退出 |
+
+</details>
+
+<details>
+<summary>脚本调用</summary>
+
+```python
+from imaging_scientist import imaging_scientist_agent
+from langchain_core.messages import HumanMessage
+from imaging_scientist.utils import format_messages
+
+thread = {"configurable": {"thread_id": "1"}}
+last_len = 0
+
+for state in imaging_scientist_agent.stream(
+    {"messages": [HumanMessage(content="Hi?")]},
+    config=thread,
+    stream_mode="values",
+):
+    msgs = state["messages"]
+    if len(msgs) > last_len:
+        format_messages(msgs[last_len:])
+        last_len = len(msgs)
+```
+
+</details>
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 🍪 示例与实践
+
+收集了一些官方示例、进阶用法和社区贡献的实践方案，帮助你更好地使用 imaging_scientist。
+
+👉 **[浏览全部示例与实践 →](docs/README.md)**
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 🔌 MCP 集成
+
+通过 [MCP](https://modelcontextprotocol.io/) 服务器一条命令即可添加外部工具：
+
+```bash
+# 用法
+ImagingSci mcp add <name> <command> [-- args...]
+
+# 示例
+ImagingSci mcp add sequential-thinking npx -- -y @modelcontextprotocol/server-sequential-thinking
+```
+
+> [!TIP]
+> 关于命令选项、配置字段、工具路由、通配符过滤和故障排查，请参阅 **[MCP 集成指南](https://github.com/WitAIScientist/WitAIScientist/tree/main/WitAIScientist/mcp#model-context-protocol-integration)**。
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 📱 渠道接入
+
+连接消息平台，使其与 CLI 共享同一智能体会话：
+
+```bash
+# 用法
+ImagingSci channel setup <channel>
+
+# 示例
+ImagingSci channel setup telegram
+```
+
+多个渠道可同时运行——在配置中用逗号分隔：
+
+```yaml
+channel_enabled: "telegram,slack,feishu,qq"
+```
+
+也可以在 CLI 会话中通过 `/channel` 交互式启动渠道。
+
+> [!TIP]
+> 关于各渠道设置指南、功能矩阵、架构详情和故障排查，请参阅 **[渠道集成指南](https://github.com/WitAIScientist/WitAIScientist/tree/main/WitAIScientist/channels#channels)**。
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 📚 致谢
+
+本项目基于以下优秀的开源项目构建：
+
+- [**LangChain**](https://github.com/langchain-ai/langchain) — 构建智能体和 LLM 驱动应用的框架。
+- [**DeepAgents**](https://github.com/langchain-ai/deepagents) — 开箱即用的智能体编排框架。
+
+感谢以上项目作者对开源社区的宝贵贡献。
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 🎯 ᯓ➤ 路线图
+
+即将推出：
+- [x] 🖥️ 全屏 TUI 和经典 CLI 双界面
+- [x] 📻 EvoMemory v1.0 已上线
+- [x] ⚒️ 200+ 预置技能已内置
+- [x] 🧩 内置研究全流程技能已上线
+- [x] 👋 Human-in-the-loop 操作审批
+- [x] 🦾 智能体主动向人类澄清确认
+- [x] 📑 技术报告已发布
+- [x] 🔐 OAuth 登录（CLI 编程智能体订阅用户）
+- [x] 📺 带工作区的 Web 应用界面（beta）
+- [ ] 📹 Demo 与教程正在制作中
+- [ ] 📊 基准测试套件即将推出
+
+敬请期待——更多功能正在路上！
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 🌍 项目角色
+
+#### Core Contributors
+
+<table>
+  <tbody>
+    <tr>
+      <td align="center">
+        <a href="https://x-izhang.github.io/">
+          <img src="https://x-izhang.github.io/author/xi-zhang/avatar.jpg"
+               width="100" height="100"
+               style="object-fit: cover; border-radius: 20%;" alt="Xi Zhang"/>
+          <br />
+          <sub><b>Xi Zhang</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://youganglyu.github.io/">
+          <img src="https://youganglyu.github.io/images/profile.png"
+               width="100" height="100"
+               style="object-fit: cover; border-radius: 20%;" alt="Yougang Lyu"/>
+          <br />
+          <sub><b>Yougang Lyu</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://din0s.me/">
+          <img src="https://din0s.me/images/pk.jpg"
+               width="100" height="100"
+               style="object-fit: cover; border-radius: 20%;" alt="Dinos Papakostas"/>
+          <br />
+          <sub><b>Dinos Papakostas</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://go0day.github.io/">
+          <img src="https://go0day.github.io/authors/admin/avatar_hu_ee1051aceae96124.png"
+               width="100" height="100"
+               style="object-fit: cover; border-radius: 20%;" alt="Yuyue Zhao"/>
+          <br />
+          <sub><b>Yuyue Zhao</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://muxincg2004.github.io/">
+          <img src="https://muxincg2004.github.io/resume_avatar.jpg"
+               width="100" height="100"
+               style="object-fit: cover; border-radius: 20%;" alt="Ziheng Zhang"/>
+          <br />
+          <sub><b>Ziheng Zhang</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://xiaohuiyan.github.io/">
+          <img src="https://xiaohuiyan.github.io/img/me.jpg"
+               width="100" height="100"
+               style="object-fit: cover; border-radius: 20%;" alt="Xiaohui Yan"/>
+          <br />
+          <sub><b>Xiaohui Yan</b></sub>
+        </a>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+#### Contributors
+
+Jan Piotrowski, Wiktor Cupiał, Jakub Kaliski, Jakub Filipiuk, Xinhao Yi, Shuyu Guo, Andreas Sauter, Wenxiang Hu, Jacopo Urbani, Zaiqiao Meng, Jun Luo, Lun Zhou
+
+> <a href="https://xiaoyi.huawei.com/chat/research"><img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/xiaoyi-deepresearch.webp" height="16" alt="Xiaoyi DeepResearch" align="center" /></a> [*Xiaoyi DeepResearch*](https://xiaoyi.huawei.com/chat/research) *Team* 及更广泛的开源社区共同为本项目做出贡献。
+
+如有任何咨询或合作意向，请联系：[**imaging_scientist.ai@gmail.com**](mailto:witaiscientist.ai@gmail.com)
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 🤝 贡献
+
+<img align="right" alt="imaging_scientist Team" src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/WitAIScientist_team.png" width="20%" />
+
+我们欢迎各层次的开发者、研究者以及 AI 编程助手参与贡献。我们的 [贡献指南](./CONTRIBUTING.md) 同时面向人类和 AI Agent 编写，涵盖架构说明、设计模式、扩展指南和代码规范，帮助你安全高效地参与项目开发。
+
+### 👥 社区贡献者
+
+⚗️ 加入 imaging_scientist 社区，探讨 AI 驱动的科研前沿，分享实验成果，共同推动自动化科学发现的未来。
+
+- [Discord](https://discord.gg/AZ9ZMXkunY) — 实时提问、分享发现，与研究者和开发者协作交流。
+- [微信](https://github.com/WitAIScientist/WitAIScientist/blob/main/.github/assets/cn_info.md) — 加入中文社区，与国内研究者和开发者交流。
+
+  <img src="https://raw.githubusercontent.com/WitAIScientist/WitAIScientist/main/.github/assets/wechat_group.jpeg" alt="微信群二维码" width="200"/>
+
+每一份贡献，都让我们离 AI 驱动科学突破、造福全人类的未来更近一步。
+
+<a href="https://github.com/WitAIScientist/WitAIScientist/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=WitAIScientist/WitAIScientist" />
+</a>
+
+<!-- ### 📈 Star 趋势
+
+[![Star History Chart](https://api.star-history.com/svg?repos=WitAIScientist/WitAIScientist&type=date&legend=bottom-right)](https://www.star-history.com/?repos=WitAIScientist%2FWitAIScientist&type=date&legend=bottom-right) -->
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 📝 引用
+
+如果您觉得我们的论文和代码对您的研究有帮助，请使用以下 BibTeX 引用：
+
+```bibtex
+@article{witaiscientist2026,
+  title={imaging_scientist: Towards Multi-Agent Evolving AI Scientists for End-to-End Scientific Discovery},
+  author={Yougang Lyu and Xi Zhang and Xinhao Yi and Yuyue Zhao and Shuyu Guo and Wenxiang Hu and Jan Piotrowski and Jakub Kaliski and Jacopo Urbani and Zaiqiao Meng and Lun Zhou and Xiaohui Yan},
+  journal={arXiv preprint arXiv:2603.08127},
+  year={2026}
+}
+```
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>
+
+## 📜 许可证
+
+本项目基于 Apache License 2.0 开源——详情请见 [LICENSE](./LICENSE) 文件。
+
+<p align="right"><a href="#top">🔝回到顶部</a></p>

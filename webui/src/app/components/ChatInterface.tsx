@@ -1,0 +1,2319 @@
+"use client";
+
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  FormEvent,
+  Fragment,
+} from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Square,
+  Send,
+  Cpu,
+  ChevronsUpDown,
+  Network,
+  Activity,
+  History,
+  CheckCircle,
+  Clock,
+  Circle,
+  FileIcon,
+  FolderOpen,
+  ShieldCheck,
+  TriangleAlert,
+  Paperclip,
+  X,
+  Pencil,
+  CornerDownRight,
+  Trash2,
+  GripVertical,
+  Ellipsis,
+  ListX,
+} from "lucide-react";
+import { ChatMessage } from "@/app/components/ChatMessage";
+import {
+  ActionGroup,
+  type GroupedActionItem,
+} from "@/app/components/ActionGroup";
+import { CompactionSummary } from "@/app/components/CompactionSummary";
+import {
+  DynamicWorkflowPanel,
+  DynamicWorkflowTrigger,
+} from "@/app/components/DynamicWorkflowPanel";
+import { isSummarizationMessage } from "@/lib/summarization";
+import { useCollapseAgentActions } from "@/lib/uiSettings";
+import {
+  bindActionRequestsToToolCalls,
+  buildToolApprovalResume,
+  interruptIdOf,
+} from "@/lib/hitl";
+import { InterruptApprovalFallback } from "@/app/components/InterruptApprovalFallback";
+import {
+  AskUserInterrupt,
+  type AskUserQuestion,
+} from "@/app/components/AskUserInterrupt";
+import type {
+  TodoItem,
+  ToolCall,
+  ActionRequest,
+  ReviewConfig,
+} from "@/app/types/types";
+import { Assistant, Message } from "@langchain/langgraph-sdk";
+import {
+  extractStringFromMessageContent,
+  stringifyUnknown,
+} from "@/app/utils/utils";
+import { useChatContext } from "@/providers/ChatProvider";
+import { cn } from "@/lib/utils";
+import { formatModel } from "@/lib/model";
+import {
+  getThreadAutoApprove,
+  setThreadAutoApprove,
+  migrateNewThreadAutoApprove,
+} from "@/lib/autoApprove";
+import {
+  agentLabel,
+  asyncTaskReportKey,
+  asyncUpdateMatchesTask,
+  asyncUpdateMessageKey,
+  countRunning,
+  formatAsyncUpdateMessage,
+  isTerminalStatus,
+  type MainChatReporter,
+} from "@/lib/asyncAgents";
+import { useAsyncAgents } from "@/app/hooks/useAsyncAgents";
+import { useAutoNotify } from "@/app/hooks/useAutoNotify";
+import { useAutoApproveInterrupt } from "@/app/hooks/useAutoApproveInterrupt";
+import {
+  getThreadAutoNotifyReportedKeys,
+  initializeThreadAutoNotifyReports,
+  isThreadAutoNotifyInitialized,
+  markThreadAutoNotifyReported,
+} from "@/lib/autoNotify";
+import { useStickToBottom } from "use-stick-to-bottom";
+import { FilesPopover } from "@/app/components/TasksFilesSidebar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useQueryState } from "nuqs";
+import { toast } from "sonner";
+import { WorkspaceFileDialog } from "@/app/components/WorkspaceFileDialog";
+import { MemoryFileDialog } from "@/app/components/MemoryFileDialog";
+import { FILE_LINK_EVENT, type FileLinkEventDetail } from "@/lib/fileLink";
+import {
+  COMMON_MODELS,
+  parseModelCommand,
+} from "@/lib/modelCommand";
+import { useAvailableModels } from "@/app/hooks/useAvailableModels";
+
+type DashboardNavTarget =
+  | {
+      view: "memory";
+      tab: "identity" | "knowledge" | "history";
+      obsId?: string;
+      execId?: string;
+    }
+  | { view: "workspace" };
+
+interface ChatInterfaceProps {
+  assistant: Assistant | null;
+  /** Increments after a global Provider / Model / Key update. */
+  runtimeConfigRevision?: number;
+  /** Refreshes the active connection profile after a composer model pick. */
+  onRuntimeConfigUpdated?: () => void;
+  // Open the right inspector on its Agents tab (composer "agents running" pulse).
+  onShowAgents?: () => void;
+  // Navigate from the empty-state dashboard.
+  onNavigate?: (target: DashboardNavTarget) => void;
+  // Open a pinned thread from the empty-state dashboard.
+  onOpenThread?: (id: string) => void;
+  // Whether the workspace inspector is currently visible.
+  workspaceOpen?: boolean;
+  // Open a workspace file in the page-level document workbench. The legacy
+  // modal remains the fallback when this callback is not supplied.
+  onOpenWorkspaceFile?: (path: string) => void;
+  // Register a "submit a message on THIS (main) thread" function up to page so
+  // the Agents board can loop an async result back to the main agent. Returns
+  // false if the main chat is mid-run (can't take a turn). Cleared on unmount.
+  onNotifyReady?: (notify: MainChatReporter | null) => void;
+}
+
+interface UploadedWorkspaceFile {
+  name: string;
+  path: string;
+  size: number;
+}
+
+// A message typed while the agent is busy. It waits in the queue and is sent
+// verbatim (append-only — never replaces what's already in the thread) once the
+// current turn finishes or is stopped. Each carries its own attached files.
+interface QueuedMessage {
+  id: number;
+  text: string;
+  files: UploadedWorkspaceFile[];
+  threadId: string | null;
+}
+
+// Build the message body sent to the backend, appending the same workspace-file
+// annotation handleSubmit uses so queued messages keep their attachments.
+function formatMessageWithFiles(
+  text: string,
+  files: UploadedWorkspaceFile[]
+): string {
+  const workspaceFiles =
+    files.length > 0
+      ? `\n\nWorkspace files uploaded for this request:\n${files
+          .map((file) => `- ${file.path}`)
+          .join("\n")}`
+      : "";
+  return `${text}${workspaceFiles}`;
+}
+
+function parseToolArgs(rawArgs: unknown): Record<string, unknown> {
+  if (rawArgs && typeof rawArgs === "object") {
+    return rawArgs as Record<string, unknown>;
+  }
+  if (typeof rawArgs !== "string") {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(rawArgs);
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function getMessageToolCalls(message: Message): Array<{
+  id?: string;
+  name: string;
+  args: Record<string, unknown>;
+}> {
+  const messageWithTools = message as Message & {
+    tool_calls?: Array<{ name?: string }>;
+  };
+  const toolCalls: Array<{
+    id?: string;
+    function?: { name?: string; arguments?: unknown };
+    name?: string;
+    type?: string;
+    args?: unknown;
+    input?: unknown;
+  }> = [];
+
+  if (
+    message.additional_kwargs?.tool_calls &&
+    Array.isArray(message.additional_kwargs.tool_calls)
+  ) {
+    toolCalls.push(...message.additional_kwargs.tool_calls);
+  } else if (
+    messageWithTools.tool_calls &&
+    Array.isArray(messageWithTools.tool_calls)
+  ) {
+    toolCalls.push(
+      ...messageWithTools.tool_calls.filter(
+        (toolCall: { name?: string }) => toolCall.name !== ""
+      )
+    );
+  } else if (Array.isArray(message.content)) {
+    toolCalls.push(
+      ...message.content.filter(
+        (block: { type?: string }) => block.type === "tool_use"
+      )
+    );
+  }
+
+  return toolCalls.map((toolCall) => {
+    const rawArgs =
+      toolCall.function?.arguments || toolCall.args || toolCall.input || {};
+    return {
+      id: toolCall.id,
+      name: toolCall.function?.name || toolCall.name || toolCall.type || "",
+      args: parseToolArgs(rawArgs),
+    };
+  });
+}
+
+const getStatusIcon = (status: TodoItem["status"], className?: string) => {
+  switch (status) {
+    case "completed":
+      return (
+        <CheckCircle
+          size={16}
+          className={cn("text-[var(--color-success)]", className)}
+        />
+      );
+    case "in_progress":
+      return (
+        <Clock
+          size={16}
+          className={cn("text-[var(--color-warning)]", className)}
+        />
+      );
+    default:
+      return (
+        <Circle
+          size={16}
+          className={cn("text-[var(--color-text-tertiary)]", className)}
+        />
+      );
+  }
+};
+
+export const ChatInterface = React.memo<ChatInterfaceProps>(
+  ({
+    assistant,
+    runtimeConfigRevision = 0,
+    onRuntimeConfigUpdated,
+    onShowAgents,
+    onNotifyReady,
+    onNavigate,
+    workspaceOpen,
+    onOpenWorkspaceFile,
+  }) => {
+    const [metaOpen, setMetaOpen] = useState<
+      "tasks" | "files" | "workflow" | null
+    >(null);
+    const tasksContainerRef = useRef<HTMLDivElement | null>(null);
+    const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const uploadInputRef = useRef<HTMLInputElement | null>(null);
+
+    const [input, setInput] = useState("");
+    const [pendingFiles, setPendingFiles] = useState<UploadedWorkspaceFile[]>(
+      []
+    );
+    const [isUploadingFiles, setIsUploadingFiles] = useState(false);
+    const [workspaceDir, setWorkspaceDir] = useState<string | null>(null);
+
+    useEffect(() => {
+      let cancelled = false;
+      fetch("/api/workspace")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { dir?: string } | null) => {
+          if (!cancelled && d?.dir) setWorkspaceDir(d.dir);
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }, []);
+    // Messages typed while the agent is busy are queued. They
+    // drain one-per-idle-window into the thread once it's free. A ref mirrors the
+    // latest queue so event handlers (key ↑, edit) read current state without
+    // being recreated; queueIdRef hands out stable keys.
+    const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+    const queuedMessagesRef = useRef<QueuedMessage[]>(queuedMessages);
+    queuedMessagesRef.current = queuedMessages;
+    const queueIdRef = useRef(0);
+    const draggedQueuedMessageIdRef = useRef<number | null>(null);
+    const [threadId] = useQueryState("threadId");
+    // Inline file paths in agent messages are rendered as click-to-open links
+    // by MarkdownContent. They dispatch a window event with the resolved
+    // workspace / memory path; we open the matching modal over the chat so
+    // workspace and memory feel uniform to the user (no view switch).
+    const [workspaceFilePath, setWorkspaceFilePath] = useState<string | null>(
+      null
+    );
+    const [memoryFilePath, setMemoryFilePath] = useState<string | null>(null);
+    useEffect(() => {
+      const onOpenFile = (e: Event) => {
+        const detail = (e as CustomEvent<FileLinkEventDetail>).detail;
+        if (!detail) return;
+        if (detail.kind === "memory") {
+          setMemoryFilePath(detail.path);
+        } else if (onOpenWorkspaceFile) {
+          onOpenWorkspaceFile(detail.path);
+        } else {
+          setWorkspaceFilePath(detail.path);
+        }
+      };
+      window.addEventListener(FILE_LINK_EVENT, onOpenFile);
+      return () => window.removeEventListener(FILE_LINK_EVENT, onOpenFile);
+    }, [onOpenWorkspaceFile]);
+    // Auto-approve is per-thread and persisted (see lib/autoApprove): it follows
+    // the conversation across view switches (Skills/Memory unmount this), thread
+    // switches, and reloads. Seed from storage for whatever thread is active on
+    // mount so returning from another view restores the right setting.
+    const [autoApprove, setAutoApproveState] = useState(() =>
+      getThreadAutoApprove(threadId)
+    );
+    const [autoApproveDialogOpen, setAutoApproveDialogOpen] = useState(false);
+    const [modelPickerOpen, setModelPickerOpen] = useState(false);
+    const [modelSearch, setModelSearch] = useState("");
+    // Reset the search box every time the picker opens — stale filter state
+    // surviving across opens would surprise the user.
+    useEffect(() => {
+      if (modelPickerOpen) setModelSearch("");
+    }, [modelPickerOpen]);
+    const {
+      registry: modelRegistry,
+      loading: modelRegistryLoading,
+      error: modelRegistryError,
+    } = useAvailableModels(runtimeConfigRevision, modelPickerOpen);
+    // We're on the curated fallback list when the registry fetch settled
+    // (not loading) but produced no entries — either an explicit error from
+    // the backend's `/api/models` route, or a successful response that came
+    // back empty. We log once so dev tools surface the cause.
+    const isFallbackModelList =
+      !modelRegistryLoading && modelRegistry.entries.length === 0;
+    useEffect(() => {
+      if (isFallbackModelList) {
+        console.warn(
+          "[model picker] using curated fallback list — registry fetch failed or empty",
+          modelRegistryError ?? "(no error message)"
+        );
+      }
+    }, [isFallbackModelList, modelRegistryError]);
+    // Picker source: prefer the backend's authoritative registry; fall back
+    // to the curated short list when the endpoint isn't available (older
+    // deployment, network blip). Registry order is the rank the backend
+    // recommends — we don't re-sort.
+    const pickerModels = useMemo(() => {
+      if (modelRegistry.entries.length > 0) {
+        return modelRegistry.entries.map((e) => ({
+          model: e.name,
+          model_provider: e.provider,
+          model_interface: e.interface,
+        }));
+      }
+      return COMMON_MODELS.map((m) => ({
+        model: m.model,
+        model_provider: m.model_provider,
+        model_interface: undefined,
+      }));
+    }, [modelRegistry.entries]);
+    // Case-insensitive substring filter on name + provider. Fuzzy match was
+    // discussed but punted — substring catches the common "I know roughly
+    // what I want" case and keeps the picker behavior predictable.
+    const filteredPickerModels = useMemo(() => {
+      const q = modelSearch.trim().toLowerCase();
+      if (!q) return pickerModels;
+      return pickerModels.filter((m) => {
+        const provider = m.model_provider ?? "";
+        const api = m.model_interface ?? "";
+        return (
+          m.model.toLowerCase().includes(q) ||
+          provider.toLowerCase().includes(q) ||
+          api.toLowerCase().includes(q)
+        );
+      });
+    }, [pickerModels, modelSearch]);
+    const previousThreadIdRef = useRef(threadId);
+    const migrateAutoApproveForCreatedThreadRef = useRef(false);
+    const { scrollRef, contentRef, scrollToBottom, isAtBottom } =
+      useStickToBottom();
+
+    const {
+      stream,
+      messages,
+      todos,
+      files,
+      ui,
+      setFiles,
+      isLoading,
+      isThreadLoading,
+      interrupt,
+      sendMessage,
+      stopStream,
+      abandonTask,
+      isAbandoning,
+      resumeInterrupt,
+      dynamicWorkflows,
+      asyncTasks,
+      summarizationEvent,
+      runFailure,
+      retryFailedModel,
+    } = useChatContext();
+
+    // Count of background async sub-agents (writing / data-analysis) still
+    // running — drives the composer's "agents running" pulse. We poll each task's
+    // REAL run status (via useAsyncAgents) rather than trusting the conversation
+    // state's cached `status`, which only updates when the agent checks and would
+    // otherwise keep the pulse on forever. Only polls when tasks actually exist.
+    const hasAsyncTasks = Object.keys(asyncTasks ?? {}).length > 0;
+    const { tasks: liveAgentTasks } = useAsyncAgents(threadId, {
+      enabled: hasAsyncTasks,
+    });
+    const runningAgents = useMemo(
+      () => countRunning(liveAgentTasks),
+      [liveAgentTasks]
+    );
+
+    // Auto-report: when on for this thread, a sub-agent that FINISHES while we're
+    // watching is looped back to the main agent automatically (same signal as the
+    // manual "Notify main chat" button — rendered as a system pill). We baseline
+    // tasks already terminal at mount / when the toggle is switched on so we never
+    // replay old completions, and only inject while the main chat is idle (one at
+    // a time; isLoading gates the rest until the agent finishes the turn).
+    const [autoNotify] = useAutoNotify(threadId);
+    // Latch covering the gap between submitting an auto-report and `isLoading`
+    // flipping true — without it a poll in that window could fire a SECOND report
+    // and collide on the main thread. Cleared once the run is confirmed running.
+    const autoFireInFlightRef = useRef(false);
+
+    useEffect(() => {
+      autoFireInFlightRef.current = false;
+    }, [threadId]);
+
+    // Once a run is actually in flight (isLoading true — from a user message, the
+    // agent's own turn, or our auto-report), release the latch: the isLoading gate
+    // now governs, and the next queued report fires when the thread next goes idle.
+    useEffect(() => {
+      if (isLoading) autoFireInFlightRef.current = false;
+    }, [isLoading]);
+
+    useEffect(() => {
+      if (!liveAgentTasks || liveAgentTasks.length === 0) return;
+      if (!threadId || !autoNotify) return;
+      // One-time migration/baseline: existing terminal tasks predate the setting
+      // and must not replay when this feature first appears or is restored.
+      if (!isThreadAutoNotifyInitialized(threadId)) {
+        initializeThreadAutoNotifyReports(
+          threadId,
+          liveAgentTasks
+            .filter((task) => isTerminalStatus(task.liveStatus))
+            .map(asyncTaskReportKey)
+        );
+        return;
+      }
+      // Don't fire when: off; the thread is busy (the agent's own turn takes the
+      // slot); a report we just sent hasn't started yet; or the USER is composing
+      // a query (draft text) — their message has priority, so we hold the queue
+      // until the composer is clear. Pending completions stay unreported (= the
+      // queue) and drain one per idle window.
+      if (isLoading || autoFireInFlightRef.current || input.trim()) return;
+      // User-queued messages take the idle slot first — hold auto-reports until
+      // the user's own queue has drained.
+      if (queuedMessages.length > 0) return;
+      const reportedKeys = getThreadAutoNotifyReportedKeys(threadId);
+      for (const t of liveAgentTasks) {
+        if (!isTerminalStatus(t.liveStatus)) continue;
+        const key = asyncTaskReportKey(t);
+        if (reportedKeys.has(key)) continue;
+        if (
+          messages.some(
+            (message) =>
+              message.type === "human" &&
+              asyncUpdateMatchesTask(
+                extractStringFromMessageContent(message),
+                t
+              )
+          )
+        ) {
+          markThreadAutoNotifyReported(threadId, key);
+          continue;
+        }
+        autoFireInFlightRef.current = true;
+        markThreadAutoNotifyReported(threadId, key);
+        sendMessage(formatAsyncUpdateMessage(t));
+        toast.success(
+          `Auto-reported ${agentLabel(t.agent_name)} to the main chat.`
+        );
+        break; // one per idle window; the rest fire once this turn settles
+      }
+    }, [
+      liveAgentTasks,
+      autoNotify,
+      isLoading,
+      input,
+      messages,
+      sendMessage,
+      threadId,
+      queuedMessages,
+    ]);
+
+    // Re-engage stick-to-bottom whenever a new run starts (sending a message or
+    // resuming an interrupt → isLoading flips true). Without this, if the user had
+    // drifted even slightly off the bottom after the previous answer, a short new
+    // reply would render below the fold and look like nothing happened.
+    useEffect(() => {
+      if (isLoading) void scrollToBottom();
+    }, [isLoading, scrollToBottom]);
+
+    // Register a "notify the main agent" hook up to page (Agents board → "Notify
+    // main chat" loops an async result back here). A ref keeps the latest
+    // sendMessage/isLoading so the once-registered closure always reads current
+    // values. Returns false if a run is in flight (the agent can't take a turn).
+    const notifyStateRef = useRef({
+      sendMessage,
+      isLoading,
+      messages,
+      threadId,
+    });
+    notifyStateRef.current = { sendMessage, isLoading, messages, threadId };
+    const onNotifyReadyRef = useRef(onNotifyReady);
+    onNotifyReadyRef.current = onNotifyReady;
+    useEffect(() => {
+      const notify: MainChatReporter = (task, expectedThreadId) => {
+        const current = notifyStateRef.current;
+        if (current.threadId !== expectedThreadId) return "wrong-thread";
+        if (current.isLoading) return "busy";
+        if (
+          current.messages.some(
+            (message) =>
+              message.type === "human" &&
+              asyncUpdateMatchesTask(
+                extractStringFromMessageContent(message),
+                task
+              )
+          )
+        ) {
+          return "duplicate";
+        }
+        markThreadAutoNotifyReported(
+          expectedThreadId,
+          asyncTaskReportKey(task)
+        );
+        current.sendMessage(formatAsyncUpdateMessage(task));
+        return "sent";
+      };
+      onNotifyReadyRef.current?.(notify);
+      return () => onNotifyReadyRef.current?.(null);
+    }, []);
+
+    // What model will the next turn use? It follows the deployment-wide
+    // Provider / Model / Key profile. Priority:
+    //   1. The model registry endpoint's reported deployment default.
+    //   2. The assistant's configured default from `assistant.config.configurable`.
+    //   3. Last AI message's `response_metadata.model_name` — final fallback
+    //      when none of the above are available (older deployment without
+    //      `/api/models`).
+    // The endpoint's `default` can disagree with what the runtime actually
+    // boots with; that's a backend honesty problem and tracked separately.
+    // Token/context usage is intentionally NOT shown — the backend doesn't
+    // persist usage_metadata, so it isn't reliably available here.
+    const currentModel = useMemo(() => {
+      if (modelRegistry.defaultEntry) {
+        return formatModel(
+          modelRegistry.defaultEntry.name,
+          modelRegistry.defaultEntry.provider ?? undefined
+        );
+      }
+      const cfg = assistant?.config as
+        | { configurable?: Record<string, unknown> }
+        | undefined;
+      const configurable = cfg?.configurable;
+      if (configurable) {
+        const info = formatModel(
+          configurable.model ?? configurable.model_name,
+          configurable.model_provider
+        );
+        if (info) return info;
+      }
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.type !== "ai") continue;
+        const rm = m.response_metadata as Record<string, unknown> | undefined;
+        const info = formatModel(
+          rm?.model_name ?? rm?.model,
+          rm?.model_provider
+        );
+        if (info) return info;
+      }
+      return null;
+    }, [
+      messages,
+      assistant?.config,
+      modelRegistry.defaultEntry,
+    ]);
+
+    // While the agent waits on an *actionable* interrupt (approval or ask_user),
+    // lock the composer so the user answers via the in-message controls — a free
+    // message would cancel the pending tool call and corrupt the thread.
+    // A bare/leftover interrupt value (e.g. after Stop) must NOT lock the input.
+    const interruptValue = interrupt?.value as
+      | { type?: string; action_requests?: unknown[] }
+      | undefined;
+    const hasPendingInterrupt =
+      interruptValue?.type === "ask_user" ||
+      (Array.isArray(interruptValue?.action_requests) &&
+        interruptValue.action_requests.length > 0);
+    const submitDisabled = isLoading || !assistant || hasPendingInterrupt;
+
+    // Drain the user-message queue: when the thread goes idle (and no interrupt is
+    // pending), send the head as the next turn. One per idle window — the
+    // autoFireInFlightRef latch (shared with auto-report) covers the gap before
+    // isLoading flips true so two messages can't race onto the thread. After Stop,
+    // isLoading drops and the queue still drains (queued = intent to send).
+    useEffect(() => {
+      if (isLoading || hasPendingInterrupt || autoFireInFlightRef.current)
+        return;
+      if (queuedMessages.length === 0) return;
+      const [head, ...rest] = queuedMessages;
+      // Effects from the previous render still run once after a route/thread
+      // change. Never let that stale queue drain into the newly selected thread.
+      if (head.threadId !== threadId) return;
+      autoFireInFlightRef.current = true;
+      setQueuedMessages(rest);
+      sendMessage(formatMessageWithFiles(head.text, head.files));
+    }, [isLoading, hasPendingInterrupt, queuedMessages, sendMessage, threadId]);
+
+    // Clear the queue when switching to a *different* conversation, but NOT on the
+    // null→real-id transition that happens when the first message of a brand-new
+    // chat creates its thread (the queue belongs to this same conversation).
+    const queueThreadRef = useRef(threadId);
+    useEffect(() => {
+      const prev = queueThreadRef.current;
+      queueThreadRef.current = threadId;
+      if (prev === null && threadId !== null) {
+        // The first submitted message creates the thread asynchronously. Carry
+        // any follow-ups queued during that transition into the new thread.
+        setQueuedMessages((messages) =>
+          messages.map((message) =>
+            message.threadId === null ? { ...message, threadId } : message
+          )
+        );
+        return;
+      }
+      if (prev !== threadId) setQueuedMessages([]);
+    }, [threadId]);
+
+    const enableAutoApprove = useCallback(() => {
+      setAutoApproveState(true);
+      setThreadAutoApprove(threadId, true);
+      setAutoApproveDialogOpen(false);
+    }, [threadId]);
+
+    const turnOffAutoApprove = useCallback(() => {
+      setAutoApproveState(false);
+      setThreadAutoApprove(threadId, false);
+      setAutoApproveDialogOpen(false);
+    }, [threadId]);
+
+    // Follow the thread: when the active thread changes, load THAT thread's saved
+    // auto-approve instead of resetting. The null→real-id transition is the new
+    // chat getting created on its first message — carry its sentinel setting over.
+    useEffect(() => {
+      const previousThreadId = previousThreadIdRef.current;
+      if (previousThreadId === threadId) return;
+
+      if (
+        previousThreadId === null &&
+        threadId !== null &&
+        migrateAutoApproveForCreatedThreadRef.current
+      ) {
+        migrateNewThreadAutoApprove(threadId);
+      } else if (previousThreadId === null && threadId !== null) {
+        // The user selected an existing research from New Chat before sending.
+        // Do not leak the pending-new-chat auto-approve sentinel onto that thread.
+        setThreadAutoApprove(null, false);
+      }
+
+      setAutoApproveState(getThreadAutoApprove(threadId));
+      setAutoApproveDialogOpen(false);
+      setPendingFiles([]);
+      migrateAutoApproveForCreatedThreadRef.current = false;
+      previousThreadIdRef.current = threadId;
+    }, [threadId]);
+
+    const handleFilesSelected = useCallback(
+      async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const selectedFiles = Array.from(event.target.files ?? []);
+        event.target.value = "";
+        if (selectedFiles.length === 0) return;
+
+        setIsUploadingFiles(true);
+        try {
+          const formData = new FormData();
+          selectedFiles.forEach((file) => formData.append("files", file));
+          const response = await fetch("/api/workspace/upload", {
+            method: "POST",
+            body: formData,
+          });
+          const data = (await response.json()) as {
+            files?: UploadedWorkspaceFile[];
+            error?: string;
+          };
+          if (!response.ok || !data.files) {
+            throw new Error(data.error || "Failed to upload files.");
+          }
+          setPendingFiles((currentFiles) => [...currentFiles, ...data.files!]);
+          toast.success(
+            `${data.files.length} file${
+              data.files.length === 1 ? "" : "s"
+            } uploaded to the workspace.`
+          );
+        } catch (error) {
+          toast.error(
+            error instanceof Error ? error.message : "Failed to upload files."
+          );
+        } finally {
+          setIsUploadingFiles(false);
+        }
+      },
+      []
+    );
+
+    const removePendingFile = useCallback((filePath: string) => {
+      setPendingFiles((currentFiles) =>
+        currentFiles.filter((file) => file.path !== filePath)
+      );
+    }, []);
+
+    // Update the deployment-wide Provider / Model pair. The backend retains a
+    // credential for each provider, so switching the model also switches to
+    // that provider's saved key instead of creating a detached thread override.
+    const setRuntimeModel = useCallback(
+      async (model: string, provider?: string) => {
+        const activeProvider = provider || modelRegistry.defaultEntry?.provider;
+        if (!activeProvider) {
+          throw new Error("Select a provider together with the model.");
+        }
+        const response = await fetch("/api/runtime-config", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: activeProvider, model }),
+        });
+        const body = (await response.json().catch(() => null)) as
+          | { error?: string; keyConfigured?: boolean }
+          | null;
+        if (!response.ok) {
+          throw new Error(body?.error || "Could not update the model.");
+        }
+        onRuntimeConfigUpdated?.();
+        if (body?.keyConfigured === false) {
+          toast.warning(
+            `Model changed to ${model}, but ${activeProvider} has no API key configured.`
+          );
+        }
+      },
+      [modelRegistry.defaultEntry?.provider, onRuntimeConfigUpdated]
+    );
+
+    // Apply a parsed `/model` command to the same profile used by the API-key
+    // dialog. A model selection is never local to just one conversation.
+    const applyModelCommand = useCallback(
+      async (cmd: ReturnType<typeof parseModelCommand>) => {
+        if (!cmd) return;
+        if (cmd.kind === "show") {
+          setModelPickerOpen(true);
+          return;
+        }
+        try {
+          if (cmd.kind === "reset") {
+            toast.success("This chat already follows the active API profile.");
+          } else {
+            await setRuntimeModel(cmd.model, cmd.provider);
+            toast.success(
+              `Model set to ${cmd.model}${
+                cmd.provider ? ` (${cmd.provider})` : ""
+              }.`
+            );
+          }
+        } catch (err) {
+          toast.error(
+            err instanceof Error
+              ? `Couldn't update model: ${err.message}`
+              : "Couldn't update model — try again."
+          );
+        }
+      },
+      [setRuntimeModel]
+    );
+
+    const handleSubmit = useCallback(
+      (e?: FormEvent) => {
+        if (e) {
+          e.preventDefault();
+        }
+        const messageText = input.trim();
+        if (!messageText) return;
+        // Intercept `/model` before the agent sees it — purely client-side
+        // state on the thread metadata. The textarea clears regardless of
+        // outcome so the command echo doesn't linger.
+        const modelCmd = parseModelCommand(messageText);
+        if (modelCmd) {
+          void applyModelCommand(modelCmd);
+          setInput("");
+          return;
+        }
+        // Can't compose with no assistant, a pending interrupt, or files still
+        // uploading. (Unlike before, isLoading is NOT a blocker — see below.)
+        if (!assistant || hasPendingInterrupt || isUploadingFiles) return;
+        // Agent busy → queue it. The queue drains and sends
+        // automatically once this turn finishes (or is stopped); the message is
+        // appended as the next turn — it never replaces what's already running.
+        if (isLoading) {
+          setQueuedMessages((prev) => [
+            ...prev,
+            {
+              id: (queueIdRef.current += 1),
+              text: messageText,
+              files: pendingFiles,
+              threadId,
+            },
+          ]);
+          setInput("");
+          setPendingFiles([]);
+          return;
+        }
+        migrateAutoApproveForCreatedThreadRef.current =
+          threadId === null && autoApprove;
+        sendMessage(formatMessageWithFiles(messageText, pendingFiles));
+        setInput("");
+        setPendingFiles([]);
+      },
+      [
+        input,
+        applyModelCommand,
+        assistant,
+        hasPendingInterrupt,
+        autoApprove,
+        isLoading,
+        isUploadingFiles,
+        pendingFiles,
+        sendMessage,
+        threadId,
+      ]
+    );
+
+    // Pull a queued message back into the composer to edit it (also restores its
+    // attached files), removing it from the queue. Only ever touches the unsent
+    // draft — the running/sent messages in the thread are untouched.
+    const editQueuedMessage = useCallback((id: number) => {
+      const target = queuedMessagesRef.current.find((m) => m.id === id);
+      if (!target) return;
+      setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+      setInput(target.text);
+      setPendingFiles(target.files);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(target.text.length, target.text.length);
+        }
+      });
+    }, []);
+
+    // "Steer": prioritize this instruction without interrupting the
+    // active run. It remains in our visible queue and drains in the next idle
+    // window, which preserves the same non-interrupting contract.
+    const steerQueuedMessage = useCallback((id: number) => {
+      setQueuedMessages((messages) => {
+        const target = messages.find((message) => message.id === id);
+        if (!target || messages[0]?.id === id) return messages;
+        return [target, ...messages.filter((message) => message.id !== id)];
+      });
+      toast.info(
+        "This message will run next without interrupting the current turn."
+      );
+    }, []);
+
+    const moveQueuedMessage = useCallback((id: number, direction: -1 | 1) => {
+      setQueuedMessages((messages) => {
+        const from = messages.findIndex((message) => message.id === id);
+        const to = from + direction;
+        if (from < 0 || to < 0 || to >= messages.length) return messages;
+        const next = [...messages];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        return next;
+      });
+    }, []);
+
+    const dropQueuedMessage = useCallback((targetId: number) => {
+      const sourceId = draggedQueuedMessageIdRef.current;
+      draggedQueuedMessageIdRef.current = null;
+      if (sourceId === null || sourceId === targetId) return;
+      setQueuedMessages((messages) => {
+        const from = messages.findIndex((message) => message.id === sourceId);
+        const to = messages.findIndex((message) => message.id === targetId);
+        if (from < 0 || to < 0) return messages;
+        const next = [...messages];
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved);
+        return next;
+      });
+    }, []);
+
+    const removeQueuedMessage = useCallback((id: number) => {
+      setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
+    }, []);
+
+    const clearQueuedMessages = useCallback(() => {
+      setQueuedMessages([]);
+    }, []);
+
+    const handleKeyDown = useCallback(
+      (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // The composer is locked only when an interrupt is pending (the textarea
+        // is disabled then) — NOT while the agent is busy: typing + Enter queues a
+        // follow-up rather than doing nothing.
+        if (hasPendingInterrupt) return;
+        // Don't submit while an IME is composing (e.g. pressing Enter to pick a
+        // Chinese/Japanese/Korean candidate must confirm text, not send).
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        // ↑ on an empty composer pulls the most recent queued message back to edit.
+        if (
+          e.key === "ArrowUp" &&
+          input.length === 0 &&
+          queuedMessagesRef.current.length > 0
+        ) {
+          e.preventDefault();
+          const queue = queuedMessagesRef.current;
+          editQueuedMessage(queue[queue.length - 1].id);
+          return;
+        }
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          handleSubmit();
+        }
+      },
+      [handleSubmit, hasPendingInterrupt, input, editQueuedMessage]
+    );
+
+    // Pull a previous user message back into the composer to edit/resend it,
+    // placing the cursor at the end so the user can keep typing.
+    const handleEditMessage = useCallback((content: string) => {
+      setInput(content);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (el) {
+          el.focus();
+          el.setSelectionRange(content.length, content.length);
+        }
+      });
+    }, []);
+
+    // Auto-approve: when enabled, approve any pending tool-execution interrupt
+    // for the rest of this conversation (each interrupt is handled once,
+    // keyed by interruptValueKey; the isLoading gate avoids the SDK-swallowed
+    // resume race documented in the hook).
+    useAutoApproveInterrupt({
+      autoApprove,
+      interrupt,
+      resumeInterrupt,
+      isLoading,
+      resetKey: threadId,
+    });
+
+    // ask_user: the agent is asking the user structured questions.
+    const askUserQuestions = useMemo<AskUserQuestion[] | null>(() => {
+      const value = interrupt?.value as
+        | { type?: string; questions?: AskUserQuestion[] }
+        | undefined;
+      if (value?.type === "ask_user" && Array.isArray(value.questions)) {
+        return value.questions;
+      }
+      return null;
+    }, [interrupt]);
+
+    const handleAskUserSubmit = useCallback(
+      (answers: string[]) => {
+        resumeInterrupt({ status: "answered", answers });
+      },
+      [resumeInterrupt]
+    );
+
+    const handleAskUserCancel = useCallback(() => {
+      resumeInterrupt({ status: "cancelled" });
+    }, [resumeInterrupt]);
+
+    // Ordered list of pending tool-approval requests from the interrupt. We hand
+    // ChatMessage the ORDER (not a name-keyed map) so two calls to the same tool
+    // in one turn (e.g. two `execute`) each bind to their OWN request/args instead
+    // of both collapsing onto the last one. `Array.isArray` guards a malformed
+    // payload — a non-array `action_requests` here would otherwise throw and blank
+    // the whole page.
+    const actionRequests: ActionRequest[] = useMemo(() => {
+      const raw =
+        interrupt?.value && (interrupt.value as any)["action_requests"];
+      return Array.isArray(raw) ? (raw as ActionRequest[]) : [];
+    }, [interrupt]);
+
+    const interruptId = useMemo(() => interruptIdOf(interrupt), [interrupt]);
+
+    const resumeToolApproval = useCallback(
+      (value: any) => {
+        resumeInterrupt(buildToolApprovalResume(interruptId, value));
+      },
+      [resumeInterrupt, interruptId]
+    );
+
+    // TODO: can we make this part of the hook?
+    const processedMessages = useMemo(() => {
+      /*
+     1. Loop through all messages
+     2. For each AI message, add the AI message, and any tool calls to the messageMap
+     3. For each tool message, find the corresponding tool call in the messageMap and update the status and output
+    */
+      const messageMap = new Map<
+        string,
+        { message: Message; toolCalls: ToolCall[] }
+      >();
+      // Sub-agent (subgraph) messages stream in alongside the main conversation
+      // when streamSubgraphs is on. They carry a NESTED langgraph_checkpoint_ns
+      // ("tools:<id>|…") while the main agent's own messages are single-segment.
+      // Keep them OUT of the main flow — they render under each sub-agent block's
+      // "Steps" instead. (streamMetadata is live-only; once complete these messages
+      // aren't in thread state anyway.)
+      const seenAsyncUpdates = new Set<string>();
+      const visibleMessages = messages.filter((message: Message) => {
+        // Humans are always user-typed (or our injected async-update pills) —
+        // never sub-agent noise. Run their checks first so a stale subgraph
+        // namespace on a previous-run human (left over in stream metadata)
+        // can't silently drop the original prompt.
+        if (message.type === "human") {
+          const key = asyncUpdateMessageKey(
+            extractStringFromMessageContent(message)
+          );
+          if (!key) return true;
+          if (seenAsyncUpdates.has(key)) return false;
+          seenAsyncUpdates.add(key);
+          return true;
+        }
+        const meta = stream.getMessagesMetadata(message)?.streamMetadata;
+        const ns = meta?.["langgraph_checkpoint_ns"];
+        if (typeof ns === "string" && ns.includes("|")) return false;
+        // The conversation-compaction summary is generated by a SEPARATE LLM
+        // call (its own "Context Extraction Assistant" system prompt, like the
+        // tool-selector). Its output transiently leaks into the raw stream as an
+        // AI message (## SESSION INTENT / ## SUMMARY / …) then vanishes — it is
+        // never persisted in `messages`. Drop it here; the stable summary is
+        // surfaced from `_summarization_event` as a collapsible block instead.
+        if (isSummarizationMessage(message)) return false;
+        return true;
+      });
+      const completedToolCallIds = new Set<string>();
+      for (const message of visibleMessages) {
+        if (message.type !== "tool") continue;
+        const toolCallId = message.tool_call_id;
+        if (toolCallId) completedToolCallIds.add(toolCallId);
+      }
+      const pendingActionCounts = new Map<string, number>();
+      for (const ar of actionRequests) {
+        pendingActionCounts.set(
+          ar.name,
+          (pendingActionCounts.get(ar.name) ?? 0) + 1
+        );
+      }
+      visibleMessages.forEach((message: Message) => {
+        if (message.type === "ai") {
+          const toolCallsWithStatus = getMessageToolCalls(message)
+            // The auxiliary tool-selector's internal `ToolSelectionResponse` call
+            // has no result and isn't HITL-gated. Surface it only as a transient
+            // spinner WHILE the run is actively selecting; hide it once the run
+            // pauses on an interrupt or settles. Otherwise the execute approval's
+            // "interrupted" icon leaks onto it (it never gets a result to clear)
+            // and it lingers instead of disappearing.
+            .filter(
+              (toolCall) =>
+                toolCall.name !== "ToolSelectionResponse" ||
+                (isLoading && !interrupt)
+            )
+            .map((toolCall, toolCallIndex) => {
+              const name = toolCall.name || "unknown";
+              const id =
+                toolCall.id ||
+                `${message.id ?? "ai-message"}-tool-${toolCallIndex}-${name}`;
+              const pendingCount = pendingActionCounts.get(name) ?? 0;
+              const hasPendingAction =
+                pendingCount > 0 && !completedToolCallIds.has(id);
+              if (hasPendingAction) {
+                pendingActionCounts.set(name, pendingCount - 1);
+              }
+              return {
+                id,
+                name,
+                args: toolCall.args,
+                // The selector call only survives the filter above while the run is
+                // actively selecting (!interrupt), so this resolves to a spinner for
+                // it without a special case.
+                status: hasPendingAction ? "interrupted" : ("pending" as const),
+              } as ToolCall;
+            });
+          messageMap.set(message.id!, {
+            message,
+            toolCalls: toolCallsWithStatus,
+          });
+        } else if (message.type === "tool") {
+          const toolCallId = message.tool_call_id;
+          if (!toolCallId) {
+            return;
+          }
+          for (const [, data] of messageMap.entries()) {
+            const toolCallIndex = data.toolCalls.findIndex(
+              (tc: ToolCall) => tc.id === toolCallId
+            );
+            if (toolCallIndex === -1) {
+              continue;
+            }
+            data.toolCalls[toolCallIndex] = {
+              ...data.toolCalls[toolCallIndex],
+              status: "completed" as const,
+              result: extractStringFromMessageContent(message),
+            };
+            break;
+          }
+        } else if (message.type === "human") {
+          messageMap.set(message.id!, {
+            message,
+            toolCalls: [],
+          });
+        }
+      });
+      const processedArray = Array.from(messageMap.values());
+      return processedArray.map((data, index) => {
+        const prevMessage =
+          index > 0 ? processedArray[index - 1].message : null;
+        return {
+          ...data,
+          showAvatar: data.message.type !== prevMessage?.type,
+        };
+      });
+    }, [messages, actionRequests, interrupt, isLoading, stream]);
+
+    const hasWorkflows = useMemo(
+      () =>
+        Object.values(dynamicWorkflows).some((e) => e.dispatches.length > 0),
+      [dynamicWorkflows]
+    );
+
+    // UI preference: auto-collapse completed agent-action groups. The user can
+    // turn this off in ConfigDialog; default is on.
+    const { value: collapseAgentActions } = useCollapseAgentActions();
+
+    // Detect whether an AI message has any actual rendered text content (as
+    // opposed to being pure tool-call carriage). Tool-only AI messages are what
+    // the ActionGroup wraps; AI messages with text (the assistant's "answer")
+    // stay outside the fold so the user always sees it without expanding.
+    const aiHasTextContent = (message: Message): boolean => {
+      const content = (message as { content?: unknown }).content;
+      if (typeof content === "string") return content.trim().length > 0;
+      if (Array.isArray(content)) {
+        for (const part of content) {
+          const t = (part as { text?: unknown })?.text;
+          if (typeof t === "string" && t.trim().length > 0) return true;
+        }
+      }
+      return false;
+    };
+
+    // Group consecutive tool-only AI entries into a single foldable action
+    // block. Anything else (human messages, AI messages with text) is rendered
+    // as before. Reuses the same ProcessedMessage shape — the ActionGroup is
+    // pure presentation, no data transformation beyond grouping.
+    type RenderedItem =
+      | { kind: "message"; data: (typeof processedMessages)[number] }
+      | { kind: "action-group"; items: GroupedActionItem[] };
+    const renderedItems = useMemo<RenderedItem[]>(() => {
+      const out: RenderedItem[] = [];
+      for (const entry of processedMessages) {
+        const isToolOnly =
+          entry.message.type === "ai" &&
+          entry.toolCalls.length > 0 &&
+          !aiHasTextContent(entry.message);
+        if (isToolOnly) {
+          const last = out[out.length - 1];
+          if (last?.kind === "action-group") {
+            last.items.push(entry);
+          } else {
+            out.push({ kind: "action-group", items: [entry] });
+          }
+        } else {
+          out.push({ kind: "message", data: entry });
+        }
+      }
+      return out;
+    }, [processedMessages]);
+
+    const lastMessageId =
+      processedMessages.length > 0
+        ? processedMessages[processedMessages.length - 1].message.id
+        : undefined;
+
+    // Where to anchor the "Conversation compacted" block. The event's
+    // cutoffIndex points into the raw `messages` array (messages[0:cutoff] were
+    // summarized); we render the block right before the first message AFTER the
+    // cutoff so it reads as "everything above was folded into this summary". If
+    // that boundary message isn't in the rendered list (e.g. cutoff past the
+    // end), fall back to appending the block after the transcript.
+    const compactionAnchorId = useMemo(() => {
+      if (!summarizationEvent) return null;
+      const processedIds = new Set(processedMessages.map((d) => d.message.id));
+      // Anchor before the first STILL-VISIBLE message at or after the cutoff, so
+      // a filtered boundary message (a tool result, or the transient summary
+      // leak itself) doesn't bump the block to the very end of the transcript.
+      for (let i = summarizationEvent.cutoffIndex; i < messages.length; i++) {
+        const id = messages[i]?.id;
+        if (id != null && processedIds.has(id)) return id;
+      }
+      return null;
+    }, [summarizationEvent, messages, processedMessages]);
+
+    const groupedTodos = {
+      in_progress: todos.filter((t) => t.status === "in_progress"),
+      pending: todos.filter((t) => t.status === "pending"),
+      completed: todos.filter((t) => t.status === "completed"),
+    };
+
+    const hasTasks = todos.length > 0;
+    const hasFiles = Object.keys(files).length > 0;
+
+    const [submittedActionRequestKeys, setSubmittedActionRequestKeys] =
+      useState<Set<string>>(() => new Set());
+    useEffect(() => {
+      if (actionRequests.length === 0) {
+        setSubmittedActionRequestKeys(new Set());
+      }
+    }, [actionRequests.length]);
+    const markActionRequestSubmitted = useCallback((key: string) => {
+      setSubmittedActionRequestKeys((current) => {
+        const next = new Set(current);
+        next.add(key);
+        return next;
+      });
+    }, []);
+
+    const reviewConfigsMap: Map<string, ReviewConfig> | null = useMemo(() => {
+      const reviewConfigs =
+        interrupt?.value && (interrupt.value as any)["review_configs"];
+      if (!Array.isArray(reviewConfigs)) return new Map<string, ReviewConfig>();
+      const entries: Array<readonly [string, ReviewConfig]> = [];
+      for (const rc of reviewConfigs as ReviewConfig[]) {
+        const actionName = rc.actionName ?? rc.action_name;
+        if (!actionName) continue;
+        entries.push([
+          actionName,
+          {
+            actionName,
+            allowedDecisions: rc.allowedDecisions ?? rc.allowed_decisions,
+          },
+        ]);
+      }
+      return new Map<string, ReviewConfig>(entries);
+    }, [interrupt]);
+
+    const lastAiToolCalls = useMemo(() => {
+      for (let i = processedMessages.length - 1; i >= 0; i--) {
+        const entry = processedMessages[i];
+        if (entry.message.type === "ai") return entry.toolCalls;
+      }
+      return [] as ToolCall[];
+    }, [processedMessages]);
+
+    const hasUnboundActionRequests = useMemo(() => {
+      if (actionRequests.length === 0) return false;
+      return (
+        bindActionRequestsToToolCalls(lastAiToolCalls, actionRequests).size ===
+        0
+      );
+    }, [actionRequests, lastAiToolCalls]);
+
+    const subAgentRequester = useMemo(() => {
+      const types = new Set(
+        lastAiToolCalls
+          .filter((tc) => tc.name === "task" && tc.status !== "completed")
+          .map((tc) => tc.args["subagent_type"])
+          .filter((t): t is string => typeof t === "string" && t.length > 0)
+      );
+      return types.size === 1 ? [...types][0] : null;
+    }, [lastAiToolCalls]);
+
+    return (
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <Dialog
+          open={autoApproveDialogOpen}
+          onOpenChange={setAutoApproveDialogOpen}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Enable Auto-approve?</DialogTitle>
+              <DialogDescription>
+                Imaging Scientist will run routine tool actions in this research
+                without asking. Dangerous shell commands (piping downloads into
+                an interpreter or network tool) are auto-rejected, while delete
+                is auto-approved.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+              <TriangleAlert
+                className="mt-0.5 size-4 shrink-0"
+                aria-hidden="true"
+              />
+              <p>
+                Auto-approve stays on for this research only and follows it
+                across views and reloads. Delete is included.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setAutoApproveDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={enableAutoApprove}
+                className="bg-amber-600 text-white hover:bg-amber-700"
+              >
+                Enable Auto-approve
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <WorkspaceFileDialog
+          path={workspaceFilePath}
+          onClose={() => setWorkspaceFilePath(null)}
+        />
+        <MemoryFileDialog
+          path={memoryFilePath}
+          onClose={() => setMemoryFilePath(null)}
+        />
+        <Dialog
+          open={modelPickerOpen}
+          onOpenChange={setModelPickerOpen}
+        >
+          <DialogContent className="model-picker-dialog sm:max-w-3xl">
+            <DialogHeader className="min-w-0 pr-8 text-left">
+              <DialogTitle>Pick the active model</DialogTitle>
+              <DialogDescription>
+                选择模型后，将使用对应平台的密钥。调用失败时不会自动切换其他模型。
+              </DialogDescription>
+            </DialogHeader>
+            <div className="model-picker-body min-w-0 space-y-4">
+              <div className="text-xs text-muted-foreground">
+                Current:{" "}
+                <span className="font-mono">
+                  {currentModel
+                    ? `${currentModel.name}${
+                        currentModel.provider
+                          ? ` (${currentModel.provider})`
+                          : ""
+                      }`
+                    : "deployment default"}
+                </span>
+                {modelRegistryLoading && (
+                  <span className="ml-2 italic">loading registry…</span>
+                )}
+              </div>
+              {isFallbackModelList && (
+                <div className="border-[var(--color-warning)]/30 bg-[var(--color-warning)]/5 flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-foreground">
+                  <span
+                    aria-hidden="true"
+                    className="text-base leading-none text-[var(--color-warning)]"
+                  >
+                    {"\u26A0"}
+                  </span>
+                  <span>
+                    Showing a curated subset — the deployment&rsquo;s
+                    <span className="mx-1 font-mono">/api/models</span>
+                    registry didn&rsquo;t load
+                    {modelRegistryError ? ` (${modelRegistryError})` : ""}.
+                    Other short names still work via{" "}
+                    <span className="font-mono">/model &lt;name&gt;</span>.
+                  </span>
+                </div>
+              )}
+              <input
+                type="text"
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+                placeholder="Filter by name or provider…"
+                autoFocus
+                className="w-full rounded-md border border-border bg-background px-3 py-1.5 font-mono text-sm placeholder:font-sans placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              {modelRegistry.catalogWarning && (
+                <p role="status" className="text-xs text-muted-foreground">{modelRegistry.catalogWarning}</p>
+              )}
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer">接口说明 · 模型目录（2026-09-18）</summary>
+                <div className="space-y-2 py-2">
+                  <p>OpenAI：Responses /responses 与 Chat Completions /chat/completions；项目按模型及服务端设置选择协议。兼容网关需确认支持的协议。</p>
+                  <p>Anthropic、MiniMax、Kimi Coding：Messages /v1/messages。Google：Gemini 原生接口。Ollama：本地 /api/chat。</p>
+                  <p>DeepSeek、千问、智谱、Moonshot、火山、NVIDIA、硅基流动：OpenAI 兼容接口。Coding Plan 与普通 API 的地址及密钥权限可能不同。</p>
+                  <p>官方型号为目录快照；custom-openai 每次打开时读取已配置中转站的 /models，按当前密钥可见范围展示。网页分组不等同于密钥分组；切换分组请使用对应的令牌。目录可见不保证调用权限，专用音视频型号不适用于聊天。</p>
+                </div>
+              </details>
+              <ul className="model-picker-list space-y-2 pl-0">
+                {filteredPickerModels.length === 0 && (
+                  <li className="px-3 py-2 text-xs text-muted-foreground">
+                    No models match &ldquo;{modelSearch}&rdquo;.
+                  </li>
+                )}
+                {filteredPickerModels.map((m) => {
+                  const isDefault =
+                    modelRegistry.defaultEntry?.name === m.model &&
+                    (modelRegistry.defaultEntry?.provider ?? null) ===
+                      (m.model_provider ?? null);
+                  return (
+                    <li key={`${m.model}|${m.model_provider ?? ""}`}>
+                      <button
+                        type="button"
+                        aria-label={`Select model ${m.model}${
+                          m.model_provider ? ` from ${m.model_provider}` : ""
+                        }${isDefault ? " (default)" : ""}`}
+                        onClick={async () => {
+                          try {
+                            await setRuntimeModel(m.model, m.model_provider);
+                            toast.success(
+                              `Model set to ${m.model}${
+                                m.model_provider ? ` (${m.model_provider})` : ""
+                              }.`
+                            );
+                            setModelPickerOpen(false);
+                          } catch (err) {
+                            toast.error(
+                              err instanceof Error
+                                ? `Couldn't update model: ${err.message}`
+                                : "Couldn't update model — try again."
+                            );
+                          }
+                        }}
+                        className={cn(
+                          "model-picker-row w-full rounded-xl border border-border px-4 py-3 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                          isDefault && "border-blue-300 bg-blue-50/60 dark:bg-blue-950/30"
+                        )}
+                      >
+                        <span className="min-w-0 break-all font-mono font-medium">
+                          {m.model}
+                          {isDefault && (
+                            <span className="ml-2 text-xs font-normal text-muted-foreground">
+                              · default
+                            </span>
+                          )}
+                        </span>
+                        {m.model_provider && (
+                          <span className="model-picker-provider min-w-0 text-xs text-muted-foreground">
+                            <span className="block">{m.model_provider}</span>
+                            {m.model_interface && (
+                              <span className="mt-1 block break-words">
+                                {m.model_interface}
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setModelPickerOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        {onNavigate && (
+          <nav aria-label="Chat resources" className="flex shrink-0 flex-wrap items-center justify-center gap-1 border-b border-border px-3 py-2 sm:gap-3">
+            {[
+              { label: "Knowledge", Icon: Network, target: { view: "memory", tab: "knowledge" } as const },
+              { label: "Timeline", Icon: Activity, target: { view: "memory", tab: "history" } as const },
+              { label: "Workspace", Icon: FolderOpen, target: { view: "workspace" } as const },
+              { label: "View all", Icon: History, target: { view: "memory", tab: "history" } as const },
+            ].map(({ label, Icon, target }) => (
+              <button key={label} type="button" onClick={() => onNavigate(target)}
+                className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                <Icon className="size-4 text-[var(--brand)]" aria-hidden="true" />
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
+        <div
+          className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
+          ref={scrollRef}
+        >
+          <div
+            className={cn("mx-auto w-full max-w-[960px] px-4 pb-4 pt-3 sm:px-5", processedMessages.length === 0 && !isLoading && "flex min-h-full flex-col justify-center")}
+            ref={contentRef}
+          >
+            {isThreadLoading ? (
+              <div className="flex items-center justify-center p-8">
+                <p className="text-muted-foreground">Loading…</p>
+              </div>
+            ) : (
+              <>
+                {processedMessages.length === 0 && !isLoading && (
+                  <div className="flex flex-1 items-center justify-center px-3 py-12 text-center">
+                    <h2 className="chat-empty-greeting">
+                      Welcome, you’re here!
+                    </h2>
+                  </div>
+                )}
+                {renderedItems.map((item, index) => {
+                  if (item.kind === "action-group") {
+                    // A group is "streaming" when its last item is the last
+                    // overall AND the run is in flight — drives the spinner +
+                    // auto-collapse-on-settle behavior inside ActionGroup.
+                    const groupLastId =
+                      item.items[item.items.length - 1].message.id;
+                    const isLastGroup = index === renderedItems.length - 1;
+                    const groupIsStreaming =
+                      isLoading && isLastGroup && groupLastId === lastMessageId;
+                    return (
+                      <ActionGroup
+                        key={`action-group-${item.items[0].message.id}`}
+                        items={item.items}
+                        isStreaming={groupIsStreaming}
+                        defaultCollapsed={collapseAgentActions}
+                        isAtBottom={isAtBottom}
+                        lastMessageId={lastMessageId}
+                        isLoading={isLoading}
+                        actionRequests={actionRequests}
+                        submittedActionRequestKeys={submittedActionRequestKeys}
+                        onActionRequestSubmitted={markActionRequestSubmitted}
+                        reviewConfigsMap={reviewConfigsMap}
+                        stream={stream}
+                        onResumeInterrupt={resumeToolApproval}
+                        graphId={assistant?.graph_id}
+                        onEditMessage={handleEditMessage}
+                        autoApprove={autoApprove}
+                        ui={ui}
+                        compactionAnchorId={compactionAnchorId}
+                        summarizationEvent={summarizationEvent ?? null}
+                      />
+                    );
+                  }
+                  const data = item.data;
+                  const messageUi = ui?.filter(
+                    (u: any) => u.metadata?.message_id === data.message.id
+                  );
+                  const isLastMessage = index === renderedItems.length - 1;
+                  const isAssistant = data.message.type !== "human";
+                  const showCompactionBefore =
+                    compactionAnchorId === data.message.id;
+                  return (
+                    <React.Fragment key={data.message.id}>
+                      {showCompactionBefore && summarizationEvent && (
+                        <CompactionSummary
+                          content={summarizationEvent.content}
+                          summarizedCount={summarizationEvent.cutoffIndex}
+                        />
+                      )}
+                      <ChatMessage
+                        message={data.message}
+                        toolCalls={data.toolCalls}
+                        isLoading={isLoading}
+                        isStreaming={isLoading && isLastMessage && isAssistant}
+                        actionRequests={
+                          isLastMessage ? actionRequests : undefined
+                        }
+                        submittedActionRequestKeys={submittedActionRequestKeys}
+                        onActionRequestSubmitted={markActionRequestSubmitted}
+                        reviewConfigsMap={
+                          isLastMessage ? reviewConfigsMap : undefined
+                        }
+                        ui={messageUi}
+                        stream={stream}
+                        onResumeInterrupt={resumeToolApproval}
+                        graphId={assistant?.graph_id}
+                        onEditMessage={handleEditMessage}
+                        autoApprove={autoApprove}
+                      />
+                    </React.Fragment>
+                  );
+                })}
+                {summarizationEvent && !compactionAnchorId && (
+                  <CompactionSummary
+                    content={summarizationEvent.content}
+                    summarizedCount={summarizationEvent.cutoffIndex}
+                  />
+                )}
+                {hasUnboundActionRequests && (
+                  <InterruptApprovalFallback
+                    actionRequests={actionRequests}
+                    reviewConfigsMap={reviewConfigsMap ?? new Map()}
+                    requestedBy={subAgentRequester}
+                    interruptKey={interruptId}
+                    onResume={resumeToolApproval}
+                    isLoading={isLoading}
+                  />
+                )}
+                {askUserQuestions && (
+                  <div className="mt-4">
+                    <AskUserInterrupt
+                      key={`ask-user-${
+                        interruptId ?? stringifyUnknown(askUserQuestions, 0)
+                      }`}
+                      questions={askUserQuestions}
+                      onSubmit={handleAskUserSubmit}
+                      onCancel={handleAskUserCancel}
+                      isLoading={isLoading}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="flex-shrink-0 bg-background">
+          {hasPendingInterrupt && !isLoading && (
+            <div className="mx-auto mb-3 flex max-w-[960px] items-center justify-between gap-3 border border-border bg-muted/40 px-3 py-2 text-sm">
+              <span>任务正在等待确认</span>
+              <Button type="button" variant="outline" size="sm" disabled={isAbandoning} onClick={() => void abandonTask()}>
+                <Square size={14} />
+                {isAbandoning ? "正在放弃..." : "放弃当前任务"}
+              </Button>
+            </div>
+          )}
+          {runFailure && !isLoading && (
+            <div role="alert" className="mx-auto mb-3 max-w-[960px] rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+              <p className="font-medium">任务已中断</p>
+              <p className="mt-1 whitespace-pre-wrap break-words">{runFailure.message}</p>
+              <p className="mt-1 text-muted-foreground">已保存的文件和检查点仍保留。</p>
+              {runFailure.canRetry && (
+                <button type="button" className="mt-2 rounded border px-3 py-1" onClick={() => void retryFailedModel()}>
+                  从中断处重试
+                </button>
+              )}
+            </div>
+          )}
+          {queuedMessages.length > 0 && (
+            <div
+              aria-label="Queued messages"
+              className="relative mx-auto -mb-4 w-[calc(100%-16px)] max-w-[960px] px-2 sm:w-[calc(100%-24px)]"
+            >
+              <div className="rounded-b-lg rounded-t-2xl border border-border bg-background pb-5 pt-1 shadow-sm">
+                {queuedMessages.map((q, index) => {
+                  const editBlocked =
+                    input.trim().length > 0 || pendingFiles.length > 0;
+                  return (
+                    <div
+                      key={q.id}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => dropQueuedMessage(q.id)}
+                      className="relative flex min-h-11 items-start gap-1.5 px-2 py-2 text-sm sm:gap-2 sm:px-3"
+                    >
+                      <button
+                        type="button"
+                        draggable
+                        onDragStart={(event) => {
+                          draggedQueuedMessageIdRef.current = q.id;
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData(
+                            "text/plain",
+                            String(q.id)
+                          );
+                        }}
+                        onDragEnd={() => {
+                          draggedQueuedMessageIdRef.current = null;
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "ArrowUp" && index > 0) {
+                            event.preventDefault();
+                            moveQueuedMessage(q.id, -1);
+                          }
+                          if (
+                            event.key === "ArrowDown" &&
+                            index < queuedMessages.length - 1
+                          ) {
+                            event.preventDefault();
+                            moveQueuedMessage(q.id, 1);
+                          }
+                        }}
+                        aria-label={`Reorder queued message ${index + 1} of ${
+                          queuedMessages.length
+                        }`}
+                        title="Drag to reorder, or use the arrow keys"
+                        className="mt-0.5 inline-flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+                      >
+                        <GripVertical
+                          className="size-3.5"
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <CornerDownRight
+                        className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span className="line-clamp-2 whitespace-pre-wrap break-words pt-0.5 text-foreground">
+                          {q.text}
+                        </span>
+                        {q.files.length > 0 && (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <Paperclip
+                              className="size-3 shrink-0"
+                              aria-hidden="true"
+                            />
+                            {q.files.length} file
+                            {q.files.length === 1 ? "" : "s"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => steerQueuedMessage(q.id)}
+                          aria-label="Steer with this message next"
+                          title="Submit next without interrupting the current turn"
+                          className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <CornerDownRight
+                            className="size-3.5"
+                            aria-hidden="true"
+                          />
+                          <span className="hidden sm:inline">Steer</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => removeQueuedMessage(q.id)}
+                          aria-label="Remove queued message"
+                          title="Remove from queue"
+                          className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <Trash2
+                            className="size-3.5"
+                            aria-hidden="true"
+                          />
+                        </button>
+                        <details
+                          className="group/menu relative"
+                          onBlur={(event) => {
+                            if (
+                              !event.currentTarget.contains(event.relatedTarget)
+                            ) {
+                              event.currentTarget.removeAttribute("open");
+                            }
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.currentTarget.removeAttribute("open");
+                              event.currentTarget
+                                .querySelector("summary")
+                                ?.focus();
+                            }
+                          }}
+                        >
+                          <summary
+                            aria-label="More queued message actions"
+                            title="More actions"
+                            className="inline-flex size-7 cursor-pointer list-none items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden"
+                          >
+                            <Ellipsis
+                              className="size-4"
+                              aria-hidden="true"
+                            />
+                          </summary>
+                          <div className="absolute right-0 top-8 z-30 min-w-40 rounded-xl border border-border bg-background p-1.5 shadow-lg">
+                            <button
+                              type="button"
+                              onClick={() => editQueuedMessage(q.id)}
+                              disabled={editBlocked}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <Pencil
+                                className="size-4"
+                                aria-hidden="true"
+                              />
+                              Edit message
+                            </button>
+                            <button
+                              type="button"
+                              onClick={clearQueuedMessages}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                            >
+                              <ListX
+                                className="size-4"
+                                aria-hidden="true"
+                              />
+                              Close queue
+                            </button>
+                          </div>
+                        </details>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div
+            className={cn(
+              "research-composer relative z-10 mx-auto mb-3 flex w-[calc(100%-24px)] max-w-[1120px] flex-shrink-0 flex-col overflow-hidden sm:mb-5 sm:w-[calc(100%-48px)]"
+            )}
+          >
+            {
+              <div className="flex max-h-60 flex-col overflow-y-auto border-b border-border bg-sidebar empty:hidden sm:max-h-72">
+                {!metaOpen && (
+                  <>
+                    <DynamicWorkflowTrigger
+                      workflows={dynamicWorkflows}
+                      expanded={false}
+                      onClick={() =>
+                        setMetaOpen((prev) =>
+                          prev === "workflow" ? null : "workflow"
+                        )
+                      }
+                    />
+                    {(() => {
+                      const activeTask = todos.find(
+                        (t) => t.status === "in_progress"
+                      );
+
+                      const totalTasks = todos.length;
+                      const remainingTasks =
+                        totalTasks - groupedTodos.pending.length;
+                      const isCompleted = totalTasks === remainingTasks;
+
+                      const tasksTrigger = (() => {
+                        if (!hasTasks) return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMetaOpen((prev) =>
+                                prev === "tasks" ? null : "tasks"
+                              )
+                            }
+                            className="grid w-full cursor-pointer grid-cols-[auto_auto_1fr] items-center gap-2.5 px-3 py-2.5 text-left sm:px-4"
+                            aria-expanded={metaOpen === "tasks"}
+                          >
+                            {(() => {
+                              if (isCompleted) {
+                                return [
+                                  <CheckCircle
+                                    key="icon"
+                                    size={16}
+                                    className="text-[var(--color-success)]"
+                                  />,
+                                  <span
+                                    key="label"
+                                    className="ml-[1px] min-w-0 truncate text-sm"
+                                  >
+                                    All tasks completed
+                                  </span>,
+                                ];
+                              }
+
+                              if (activeTask != null) {
+                                return [
+                                  <div key="icon">
+                                    {getStatusIcon(activeTask.status)}
+                                  </div>,
+                                  <span
+                                    key="label"
+                                    className="ml-[1px] min-w-0 truncate text-sm"
+                                  >
+                                    Task{" "}
+                                    {totalTasks - groupedTodos.pending.length}{" "}
+                                    of {totalTasks}
+                                  </span>,
+                                  <span
+                                    key="content"
+                                    className="min-w-0 gap-2 truncate text-sm text-muted-foreground"
+                                  >
+                                    {activeTask.content}
+                                  </span>,
+                                ];
+                              }
+
+                              return [
+                                <Circle
+                                  key="icon"
+                                  size={16}
+                                  className="text-[var(--color-text-tertiary)]"
+                                />,
+                                <span
+                                  key="label"
+                                  className="ml-[1px] min-w-0 truncate text-sm"
+                                >
+                                  Task{" "}
+                                  {totalTasks - groupedTodos.pending.length} of{" "}
+                                  {totalTasks}
+                                </span>,
+                              ];
+                            })()}
+                          </button>
+                        );
+                      })();
+
+                      const filesTrigger = (() => {
+                        if (!hasFiles) return null;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMetaOpen((prev) =>
+                                prev === "files" ? null : "files"
+                              )
+                            }
+                            className="flex flex-shrink-0 cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm sm:px-4"
+                            aria-expanded={metaOpen === "files"}
+                          >
+                            <FileIcon size={16} />
+                            Files (State)
+                            <span className="h-4 min-w-4 rounded-full bg-[var(--brand-solid)] px-0.5 text-center text-[10px] leading-[16px] text-[var(--brand-foreground)]">
+                              {Object.keys(files).length}
+                            </span>
+                          </button>
+                        );
+                      })();
+
+                      if (!hasTasks && !hasFiles) return null;
+
+                      return (
+                        <div className="flex items-center">
+                          <div className="min-w-0 flex-1">{tasksTrigger}</div>
+                          {filesTrigger}
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+
+                {metaOpen && (
+                  <>
+                    <div className="sticky top-0 flex items-stretch bg-sidebar text-sm">
+                      {hasTasks && (
+                        <button
+                          type="button"
+                          className="py-2.5 pr-4 first:pl-3 aria-expanded:font-semibold sm:first:pl-4"
+                          onClick={() =>
+                            setMetaOpen((prev) =>
+                              prev === "tasks" ? null : "tasks"
+                            )
+                          }
+                          aria-expanded={metaOpen === "tasks"}
+                        >
+                          Tasks
+                        </button>
+                      )}
+                      {hasFiles && (
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-2 py-2.5 pr-4 first:pl-3 aria-expanded:font-semibold sm:first:pl-4"
+                          onClick={() =>
+                            setMetaOpen((prev) =>
+                              prev === "files" ? null : "files"
+                            )
+                          }
+                          aria-expanded={metaOpen === "files"}
+                        >
+                          Files (State)
+                          <span className="h-4 min-w-4 rounded-full bg-[var(--brand-solid)] px-0.5 text-center text-[10px] leading-[16px] text-[var(--brand-foreground)]">
+                            {Object.keys(files).length}
+                          </span>
+                        </button>
+                      )}
+                      {hasWorkflows && (
+                        <button
+                          type="button"
+                          className="py-2.5 pr-4 first:pl-3 aria-expanded:font-semibold sm:first:pl-4"
+                          onClick={() =>
+                            setMetaOpen((prev) =>
+                              prev === "workflow" ? null : "workflow"
+                            )
+                          }
+                          aria-expanded={metaOpen === "workflow"}
+                        >
+                          Workflow
+                        </button>
+                      )}
+                      <button
+                        aria-label="Close"
+                        className="flex-1"
+                        onClick={() => setMetaOpen(null)}
+                      />
+                    </div>
+                    <div
+                      ref={tasksContainerRef}
+                      className="px-3 sm:px-4"
+                    >
+                      {metaOpen === "tasks" &&
+                        Object.entries(groupedTodos)
+                          .filter(([_, todos]) => todos.length > 0)
+                          .map(([status, todos]) => (
+                            <div
+                              key={status}
+                              className="mb-4"
+                            >
+                              <h3 className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-tertiary">
+                                {
+                                  {
+                                    pending: "Pending",
+                                    in_progress: "In Progress",
+                                    completed: "Completed",
+                                  }[status]
+                                }
+                              </h3>
+                              <div className="grid grid-cols-[auto_1fr] gap-3 rounded-sm p-1 pl-0 text-sm">
+                                {todos.map((todo, index) => (
+                                  <Fragment
+                                    key={`${status}_${todo.id}_${index}`}
+                                  >
+                                    {getStatusIcon(todo.status, "mt-0.5")}
+                                    <span className="break-words text-inherit">
+                                      {todo.content}
+                                    </span>
+                                  </Fragment>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+
+                      {metaOpen === "files" && (
+                        <div className="mb-6">
+                          <FilesPopover
+                            files={files}
+                            setFiles={setFiles}
+                            editDisabled={
+                              isLoading === true || interrupt !== undefined
+                            }
+                          />
+                        </div>
+                      )}
+
+                      {metaOpen === "workflow" && (
+                        <DynamicWorkflowPanel workflows={dynamicWorkflows} />
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            }
+            {autoApprove && (
+              <div
+                aria-live="polite"
+                className="flex items-center justify-between gap-3 border-b border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100"
+              >
+                <span className="flex items-center gap-1.5">
+                  <TriangleAlert
+                    className="size-3.5 shrink-0"
+                    aria-hidden="true"
+                  />
+                  Tool actions auto-run, including delete. Dangerous commands
+                  are blocked.
+                </span>
+                <button
+                  type="button"
+                  onClick={turnOffAutoApprove}
+                  aria-label="Turn off auto-approve"
+                  className="shrink-0 rounded px-2 py-1 font-semibold transition-colors hover:bg-amber-200 focus-visible:ring-2 focus-visible:ring-amber-700 dark:hover:bg-amber-900"
+                >
+                  Turn Off
+                </button>
+              </div>
+            )}
+            {runningAgents > 0 && (
+              <div className="flex items-center gap-1.5 border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
+                {runningAgents > 0 && (
+                  <button
+                    type="button"
+                    onClick={onShowAgents}
+                    title={`${runningAgents} background agent${
+                      runningAgents === 1 ? "" : "s"
+                    } running — click to view`}
+                    aria-label={`${runningAgents} background agent${
+                      runningAgents === 1 ? "" : "s"
+                    } running — view`}
+                    className="ml-auto flex shrink-0 items-center gap-1.5 rounded px-1.5 py-0.5 font-medium text-[var(--brand)] transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span
+                      className="size-2 animate-pulse rounded-full bg-[var(--color-warning)]"
+                      aria-hidden="true"
+                    />
+                    {runningAgents} agent{runningAgents === 1 ? "" : "s"}
+                  </button>
+                )}
+              </div>
+            )}
+            <form
+              onSubmit={handleSubmit}
+              className="flex flex-col"
+            >
+              {pendingFiles.length > 0 && (
+                <div
+                  aria-label="Attached files"
+                  className="flex flex-wrap gap-2 border-b border-border px-3 py-2"
+                >
+                  {pendingFiles.map((file) => (
+                    <span
+                      key={file.path}
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border bg-muted px-2 py-1 text-xs text-foreground"
+                    >
+                      <FileIcon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      <span
+                        className="max-w-48 truncate"
+                        title={file.path}
+                      >
+                        {file.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removePendingFile(file.path)}
+                        aria-label={`Remove ${file.name} from this message`}
+                        title={`Remove ${file.name} from this message`}
+                        className="rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <X
+                          className="size-3.5"
+                          aria-hidden="true"
+                        />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                aria-label="Message"
+                disabled={hasPendingInterrupt}
+                placeholder={
+                  hasPendingInterrupt
+                    ? "Respond to the request above to continue…"
+                    : isLoading
+                    ? "Queue a follow-up — sends when this turn finishes…"
+                    : "Ask Imaging Scientist anything…"
+                }
+                className="research-composer-input field-sizing-content flex-1 resize-none border-0 bg-transparent text-primary outline-none placeholder:text-tertiary disabled:cursor-not-allowed"
+                rows={3}
+              />
+              <div className="research-composer-footer">
+                <div className="research-composer-tools">
+                  <input
+                    ref={uploadInputRef}
+                    type="file"
+                    multiple
+                    onChange={handleFilesSelected}
+                    disabled={
+                      !assistant || hasPendingInterrupt || isUploadingFiles
+                    }
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => uploadInputRef.current?.click()}
+                    disabled={
+                      !assistant || hasPendingInterrupt || isUploadingFiles
+                    }
+                    aria-label="Upload files to workspace"
+                    title="Upload files to workspace (max 50 MB each)"
+                    className="research-composer-tool"
+                  >
+                    <Paperclip
+                      className="size-5"
+                      aria-hidden="true"
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      autoApprove
+                        ? turnOffAutoApprove()
+                        : setAutoApproveDialogOpen(true)
+                    }
+                    aria-pressed={autoApprove}
+                    aria-label={autoApprove ? "Auto-approve On" : "Auto-approve"}
+                    title="Auto-approve all tool actions in this conversation"
+                    className={cn(
+                      "research-composer-tool",
+                      autoApprove
+                        ? "bg-amber-600 text-white hover:bg-amber-700"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    )}
+                  >
+                    <ShieldCheck
+                      className="size-5"
+                      aria-hidden="true"
+                    />
+                    <span className="sr-only">
+                      {autoApprove ? "Auto-approve On" : "Auto-approve"}
+                    </span>
+                  </button>
+                  {onNavigate && workspaceDir && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate({ view: "workspace" })}
+                      title={`${
+                        workspaceOpen ? "Close" : "Open"
+                      } workspace: ${workspaceDir}`}
+                      aria-label={`${
+                        workspaceOpen ? "Close" : "Open"
+                      } workspace: ${workspaceDir}`}
+                      aria-pressed={Boolean(workspaceOpen)}
+                      className="research-composer-tool"
+                    >
+                      <FolderOpen
+                        className="size-5 flex-shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span className="sr-only">
+                        {workspaceDir.split("/").filter(Boolean).pop() ||
+                          workspaceDir}
+                      </span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    aria-label="Clear draft"
+                    title="Clear draft and detach files (uploaded files are kept)"
+                    disabled={(!input && pendingFiles.length === 0) || isUploadingFiles || hasPendingInterrupt}
+                    onClick={() => {
+                      setInput("");
+                      setPendingFiles([]);
+                      textareaRef.current?.focus();
+                    }}
+                    className="research-composer-tool"
+                  >
+                    <Trash2 className="size-5" aria-hidden="true" />
+                  </button>
+                </div>
+                <div className="research-composer-actions">
+                  <button
+                    type="button"
+                    onClick={() => setModelPickerOpen(true)}
+                    title="Change model for this chat"
+                    aria-label="Change model for this chat"
+                    className="research-composer-model"
+                  >
+                    <Cpu className="size-5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{currentModel?.name || "Select model"}</span>
+                    {currentModel?.provider && (
+                      <span className="research-composer-provider">{currentModel.provider}</span>
+                    )}
+                    <ChevronsUpDown className="size-3.5 shrink-0" aria-hidden="true" />
+                  </button>
+                  <Button
+                    type={isLoading ? "button" : "submit"}
+                    variant={isLoading ? "destructive" : "default"}
+                    onClick={isLoading ? stopStream : handleSubmit}
+                    disabled={
+                      !isLoading &&
+                      (submitDisabled || isUploadingFiles || !input.trim())
+                    }
+                    aria-label={isLoading ? "Stop generating" : "Send message"}
+                    className="research-composer-send"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Square size={14} />
+                        <span className="hidden sm:inline">Stop</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send size={19} />
+                        <span className="hidden sm:inline">Send</span>
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    );
+  }
+);
+
+ChatInterface.displayName = "ChatInterface";

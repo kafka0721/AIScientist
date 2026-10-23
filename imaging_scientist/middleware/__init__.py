@@ -1,0 +1,71 @@
+"""Middleware package for imaging_scientist.
+
+Re-exports middleware classes and factory functions so that existing
+``from imaging_scientist.middleware import X`` imports continue to work.
+"""
+
+from .ask_user import (
+    AskUserMiddleware,
+    AskUserRequest,
+    AskUserWidgetResult,
+    Choice,
+    Question,
+)
+from .configurable_model import ConfigurableModelMiddleware
+from .context_editing import (
+    compute_context_editing_trigger,
+    create_context_editing_middleware,
+)
+from .context_overflow import ContextOverflowMapperMiddleware
+from .memory import (
+    EvoMemoryMiddleware,
+    create_memory_middleware,
+)
+from .memory_lifecycle import (
+    EvoMemoryLifecycleMiddleware,
+    create_memory_lifecycle_middleware,
+    default_memory_scheduler,
+)
+from .model_fallback import ModelFallbackMiddleware, load_fallback_chain
+from .rebuttal_agent import (
+    RebuttalAgentMiddleware,
+    create_rebuttal_agent_middleware,
+)
+from .runtime_context import RuntimeContextMiddleware, create_runtime_context_middleware
+from .tool_error_handler import ToolErrorHandlerMiddleware
+from .tool_selector import create_tool_selector_middleware
+from .utils import disable_thinking
+
+
+def create_code_interpreter_middleware(*, timeout=60.0, max_result_chars=10000):
+    """Load the optional QuickJS middleware only when it is actually enabled."""
+    from .code_interpreter import create_code_interpreter_middleware as create
+
+    return create(timeout=timeout, max_result_chars=max_result_chars)
+
+__all__ = [
+    "AskUserMiddleware",
+    "AskUserRequest",
+    "AskUserWidgetResult",
+    "Choice",
+    "ConfigurableModelMiddleware",
+    "ContextOverflowMapperMiddleware",
+    "EvoMemoryLifecycleMiddleware",
+    "EvoMemoryMiddleware",
+    "ModelFallbackMiddleware",
+    "Question",
+    "RebuttalAgentMiddleware",
+    "RuntimeContextMiddleware",
+    "ToolErrorHandlerMiddleware",
+    "compute_context_editing_trigger",
+    "create_code_interpreter_middleware",
+    "create_context_editing_middleware",
+    "create_memory_lifecycle_middleware",
+    "create_memory_middleware",
+    "create_rebuttal_agent_middleware",
+    "create_runtime_context_middleware",
+    "create_tool_selector_middleware",
+    "default_memory_scheduler",
+    "disable_thinking",
+    "load_fallback_chain",
+]

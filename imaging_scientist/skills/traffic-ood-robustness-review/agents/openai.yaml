@@ -1,0 +1,4 @@
+interface:
+  display_name: "Traffic OOD Robustness Review"
+  short_description: "Audit traffic forecasts under distribution shifts"
+  default_prompt: "Use $traffic-ood-robustness-review to audit this traffic forecasting hypothesis and experiment plan for OOD robustness."

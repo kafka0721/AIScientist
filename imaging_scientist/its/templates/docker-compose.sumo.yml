@@ -1,0 +1,15 @@
+# Minimal SUMO control stack for EvoITS Phase 2.
+# Mount the experiment workdir and write metrics to ITS_ARTIFACTS_DIR.
+services:
+  sumo:
+    image: ghcr.io/eclipse-sumo/sumo:latest
+    working_dir: /work
+    volumes:
+      - ${ITS_WORKDIR:-.}:/work
+      - ${ITS_ARTIFACTS_DIR:-./artifacts}:/artifacts
+    environment:
+      ITS_RUN_ID: ${ITS_RUN_ID:-}
+      ITS_ARTIFACTS_DIR: /artifacts
+      ITS_DEMAND_FILE: ${ITS_DEMAND_FILE:-}
+    # Override command in project compose or via simulate_args.
+    command: ["sumo", "--help"]

@@ -1,0 +1,907 @@
+"use client";
+
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { useStream } from "@langchain/langgraph-sdk/react";
+import { type Message, type Assistant } from "@langchain/langgraph-sdk";
+import { v4 as uuidv4 } from "uuid";
+import type { UseStreamThread } from "@langchain/langgraph-sdk/react";
+import type { TodoItem } from "@/app/types/types";
+import { useClient } from "@/providers/ClientProvider";
+import { useQueryState } from "nuqs";
+import { pickThreadMessages } from "@/lib/threadMessages";
+import { checkpointFailure } from "@/lib/runFailure";
+import { abandonPendingTask, cancelActiveRuns, type PendingTaskClient } from "@/lib/threadLifecycle";
+import { parseSummarizationEvent } from "@/lib/summarization";
+import {
+  applySubagentEvent,
+  finalizeRunning,
+  mergeWorkflowMaps,
+  parseSubagentEvent,
+  type WorkflowMap,
+} from "@/lib/dynamicWorkflow";
+import { loadThreadWorkflows, saveThreadWorkflows } from "@/lib/workflowStore";
+import { toast } from "sonner";
+import {
+  MODEL_OVERRIDE_METADATA_KEY,
+  type ModelOverride,
+} from "@/lib/modelCommand";
+import {
+  deriveThreadMetadata,
+  persistThreadDerivedMetadata,
+  setThreadModelOverride,
+} from "@/app/hooks/useThreads";
+
+export type StateType = {
+  messages: Message[];
+  todos: TodoItem[];
+  files: Record<string, string>;
+  email?: {
+    id?: string;
+    subject?: string;
+    page_content?: string;
+  };
+  // Background async sub-agents (writing-agent / data-analysis-agent) this
+  // conversation launched, keyed by task_id. Shape = deepagents' AsyncTask.
+  async_tasks?: Record<string, unknown>;
+  // Private state field set by the deepagents SummarizationMiddleware when the
+  // conversation is compacted. langgraph dev exposes it over the SDK; the UI
+  // surfaces it as a collapsible "Conversation compacted" block.
+  _summarization_event?: unknown;
+  ui?: any;
+};
+
+/**
+ * Sanitize a raw interrupt pulled from `client.threads.getState` before it is
+ * surfaced to the UI. The live SDK normalizes `stream.interrupt`, but the raw
+ * persisted task interrupt is unvalidated — if its `value.action_requests`
+ * (or `review_configs`) is present but NOT an array, ChatInterface's
+ * `actionRequests.map(...)` / `for (const rc of review_configs)` throws and
+ * blanks the entire page (the hard crash seen when deleting a file). Require an
+ * object with an object `value`, and coerce any malformed list field to `[]` so
+ * the worst case is "no card" instead of a render crash.
+ */
+function normalizePendingInterrupt(
+  pending: unknown
+): { value: Record<string, unknown> } | undefined {
+  if (!pending || typeof pending !== "object") return undefined;
+  const value = (pending as { value?: unknown }).value;
+  if (!value || typeof value !== "object") return undefined;
+  const v = value as Record<string, unknown>;
+  const normalizedValue: Record<string, unknown> = { ...v };
+  if ("action_requests" in v && !Array.isArray(v.action_requests)) {
+    normalizedValue.action_requests = [];
+  }
+  if ("review_configs" in v && !Array.isArray(v.review_configs)) {
+    normalizedValue.review_configs = [];
+  }
+  // Preserve the interrupt's other fields (id, ns, …); only the value is fixed.
+  return { ...(pending as object), value: normalizedValue } as {
+    value: Record<string, unknown>;
+  };
+}
+
+/**
+ * Total visible text length across a message list. Used to detect when the live
+ * stream dropped tail CONTENT without dropping the message COUNT — e.g. the
+ * final assistant turn arrives as an empty/partial AI message (same count) while
+ * the persisted server snapshot has the full text. A pure length compare misses
+ * that; comparing total text catches it.
+ */
+function totalTextLength(msgs: Message[]): number {
+  let n = 0;
+  for (const m of msgs) {
+    const c = (m as { content?: unknown }).content;
+    if (typeof c === "string") {
+      n += c.length;
+    } else if (Array.isArray(c)) {
+      for (const part of c) {
+        const t = (part as { text?: unknown })?.text;
+        if (typeof t === "string") n += t.length;
+      }
+    }
+  }
+  return n;
+}
+
+/**
+ * A stable key for an interrupt, used to tell "the stale interrupt the server
+ * already resolved" apart from "a genuinely new interrupt". Prefer the
+ * backend-supplied `Interrupt.id` (unique per logical interrupt, populated
+ * consistently by LangGraph's checkpoint state on both the live
+ * `values.__interrupt__` path and the getState-fetched path). Falling back to
+ * a `value` content hash would collapse two calls to the same tool with the
+ * same args - the "repeat the same action" scenario - making auto-approve
+ * skip legitimate re-approvals. Object identity alone can't be trusted
+ * because the SDK's getter re-derives the object per render.
+ */
+function coerceInterrupt(i: unknown): unknown {
+  return Array.isArray(i) ? i[i.length - 1] : i;
+}
+
+export function interruptValueKey(i: unknown): string | null {
+  if (!i || typeof i !== "object") return null;
+  const asObj = i as { id?: unknown; value?: unknown };
+  if (typeof asObj.id === "string" && asObj.id.length > 0) {
+    return `id:${asObj.id}`;
+  }
+  try {
+    return `v:${JSON.stringify(asObj.value ?? null)}`;
+  } catch {
+    return null;
+  }
+}
+
+function hasActionableInterrupt(i: unknown): boolean {
+  if (!i || typeof i !== "object") return false;
+  const value = (i as { value?: unknown }).value;
+  if (!value || typeof value !== "object") return false;
+  const v = value as { type?: unknown; action_requests?: unknown };
+  return (
+    v.type === "ask_user" ||
+    (Array.isArray(v.action_requests) && v.action_requests.length > 0)
+  );
+}
+
+export function latestTaskInterrupt(
+  tasks:
+    | Array<{ interrupts?: unknown[]; result?: unknown; error?: unknown }>
+    | undefined
+): unknown {
+  if (!Array.isArray(tasks)) return undefined;
+  for (let i = tasks.length - 1; i >= 0; i--) {
+    const task = tasks[i];
+    if (!task || task.result != null || task.error != null) continue;
+    const interrupts = task.interrupts;
+    if (Array.isArray(interrupts) && interrupts.length > 0) {
+      return interrupts[interrupts.length - 1];
+    }
+  }
+  return undefined;
+}
+
+export function formatStreamError(error: unknown): string {
+  const cap = (s: string) => (s.length > 300 ? s.slice(0, 297) + "..." : s);
+  if (typeof error === "string" && error.trim()) return cap(error.trim());
+  if (error && typeof error === "object") {
+    const e = error as {
+      name?: unknown;
+      message?: unknown;
+      error?: unknown;
+      provider?: unknown;
+      status_code?: unknown;
+      code?: unknown;
+      request_id?: unknown;
+    };
+    const msg = typeof e.message === "string" ? e.message.trim() : null;
+    if (typeof e.provider === "string" && e.provider && msg) {
+      const label =
+        typeof e.error === "string" && e.error.trim() ? e.error.trim() : null;
+      const details = [
+        e.provider,
+        typeof e.status_code === "number" ? String(e.status_code) : null,
+        typeof e.code === "string" && e.code ? e.code : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const requestId =
+        typeof e.request_id === "string" && e.request_id
+          ? ` [${e.request_id}]`
+          : "";
+      const head = label ? `${label}: ${msg}` : msg;
+      return cap(`${head} (${details})${requestId}`);
+    }
+    const name = typeof e.name === "string" ? e.name.trim() : null;
+    let inner: string | null = null;
+    if (typeof e.error === "string" && e.error.trim()) {
+      inner = e.error.trim();
+    } else if (e.error && typeof e.error === "object") {
+      try {
+        inner = JSON.stringify(e.error);
+      } catch {
+        inner = null;
+      }
+    }
+    const body = msg ?? inner;
+    const combined = name && body ? `${name}: ${body}` : name ?? body ?? "";
+    if (combined) return cap(combined);
+  }
+  return "Run failed.";
+}
+
+export function useChat({
+  activeAssistant,
+  workspaceDir,
+  onHistoryRevalidate,
+  thread,
+}: {
+  activeAssistant: Assistant | null;
+  workspaceDir?: string | null;
+  onHistoryRevalidate?: () => void;
+  thread?: UseStreamThread<StateType>;
+}) {
+  const [threadId, setThreadId] = useQueryState("threadId");
+  const client = useClient();
+  const [runFailure, setRunFailure] = useState<{
+    threadId: string | null;
+    message: string;
+    canRetry: boolean;
+  } | null>(null);
+  const [recoveryVersion, setRecoveryVersion] = useState(0);
+  const abandoningRef = useRef(false);
+  const [isAbandoning, setIsAbandoning] = useState(false);
+  const retryInFlightRef = useRef(false);
+  const activeThreadIdRef = useRef(threadId);
+  activeThreadIdRef.current = threadId;
+
+  const handleThreadId = useCallback(
+    (newThreadId: string) => {
+      void setThreadId(newThreadId);
+      if (!workspaceDir) return;
+
+      // New threads are created by useStream without caller metadata. Tag the
+      // thread as soon as the server assigns its id so Recent's workspace
+      // filter can include it without mixing in another project's history.
+      void client.threads
+        .get(newThreadId)
+        .then((created) => {
+          const metadata =
+            (created.metadata as Record<string, unknown> | undefined) ?? {};
+          if (metadata.workspace_dir === workspaceDir) return;
+          return client.threads.update(newThreadId, {
+            metadata: { ...metadata, workspace_dir: workspaceDir },
+          });
+        })
+        .then(() => onHistoryRevalidate?.())
+        .catch(() => {
+          // The run can finish before this best-effort metadata patch; the
+          // next successful turn retries through the same callback path.
+        });
+    },
+    [client, onHistoryRevalidate, setThreadId, workspaceDir]
+  );
+
+  const [dynamicWorkflows, setDynamicWorkflows] = useState<WorkflowMap>({});
+  const workflowThreadIdRef = useRef(threadId);
+
+  const stream = useStream<StateType>({
+    assistantId: activeAssistant?.assistant_id || "",
+    client: client ?? undefined,
+    reconnectOnMount: true,
+    threadId: threadId ?? null,
+    onThreadId: handleThreadId,
+    defaultHeaders: { "x-auth-scheme": "langsmith" },
+    // NOTE: do NOT set `throttle: <ms>` here. The SDK's `throttle` option
+    // (from 1.1.0) is implemented as a debounce in `dist/ui/manager.js` -
+    // each notification cancels the previous timer and restarts it. Under
+    // continuous streaming (backend emits frames faster than the timer
+    // window), the timer never fires and updates accumulate silently until
+    // the model briefly pauses, at which point the entire buffer flushes in
+    // one avalanche render (visible as "chat freezes for minutes, then
+    // suddenly unfolds"). The always-on setTimeout(0) RootMessageProjection
+    // coalescing added in SDK 1.9.3 does the actual render-pressure fix we
+    // wanted from throttle - flushes every macrotask, not every debounce
+    // window - so we don't need the option here.
+    // Enable fetching state history when switching to existing threads
+    fetchStateHistory: true,
+    // Revalidate thread list when stream finishes, errors, or creates new
+    // thread. Errors additionally surface a toast with the SDK's payload -
+    // without this the user only sees React's generic "An internal error
+    // occurred" and has to dig into the server log to learn that, e.g., a
+    // model provider returned a quota error.
+    onFinish: onHistoryRevalidate,
+    onError: (error) => {
+      onHistoryRevalidate?.();
+      const message = formatStreamError(error);
+      setRunFailure({ threadId, message, canRetry: false });
+      toast.error(message);
+    },
+    onCreated: onHistoryRevalidate,
+    onCustomEvent: (data, options) => {
+      if (options?.namespace && options.namespace.length > 0) return;
+      const event = parseSubagentEvent(data);
+      if (!event) return;
+      setDynamicWorkflows((prev) =>
+        applySubagentEvent(prev, event, Date.now())
+      );
+    },
+    thread,
+  });
+
+  // `stream` is a NEW object every render of `useStream` — depending on it in a
+  // `useCallback` makes the callback churn on every stream notification (which
+  // fires on each token under fine-grained streaming, e.g. DeepSeek). Any
+  // effect that lists such a callback in its deps then re-runs per token,
+  // repeatedly hitting React's "Maximum update depth" guard and — pre backend
+  // dedup — firing bursts of duplicate `/runs/stream` POSTs. We hold `stream`
+  // in a ref that we refresh each render and read `.current.submit(...)` from
+  // inside stable callbacks, so downstream callback identity stays constant.
+  const streamRef = useRef(stream);
+  streamRef.current = stream;
+
+  useEffect(() => {
+    const previousThreadId = workflowThreadIdRef.current;
+    workflowThreadIdRef.current = threadId;
+    if (!threadId) {
+      setDynamicWorkflows({});
+      return;
+    }
+    const stored = loadThreadWorkflows(threadId);
+    setDynamicWorkflows((prev) =>
+      previousThreadId !== null && previousThreadId !== threadId
+        ? stored
+        : mergeWorkflowMaps(stored, prev)
+    );
+  }, [threadId]);
+
+  const prevWorkflowLoadingRef = useRef(stream.isLoading);
+  useEffect(() => {
+    const was = prevWorkflowLoadingRef.current;
+    prevWorkflowLoadingRef.current = stream.isLoading;
+    if (was && !stream.isLoading) {
+      setDynamicWorkflows((prev) => finalizeRunning(prev, Date.now()));
+    }
+  }, [stream.isLoading]);
+
+  useEffect(() => {
+    if (!threadId || Object.keys(dynamicWorkflows).length === 0) return;
+    const timer = setTimeout(() => {
+      saveThreadWorkflows(threadId, dynamicWorkflows);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [threadId, dynamicWorkflows]);
+
+  const workflowsFlushRef = useRef<{
+    threadId: string | null;
+    map: WorkflowMap;
+  }>({
+    threadId: null,
+    map: {},
+  });
+  workflowsFlushRef.current = { threadId, map: dynamicWorkflows };
+  useEffect(
+    () => () => {
+      const { threadId: tid, map } = workflowsFlushRef.current;
+      if (tid && Object.keys(map).length > 0) saveThreadWorkflows(tid, map);
+    },
+    []
+  );
+
+  // --- Resilient pending-state fallback ------------------------------------
+  // The live SSE stream can end (isLoading flips false) BEFORE the run actually
+  // pauses on a tool-approval interrupt server-side — e.g. the backend's
+  // auxiliary tool-selector model emits into the stream and desyncs it. When
+  // that happens, `stream.interrupt` stays empty AND `stream.messages` is stale
+  // (missing the final `execute` tool-call message), so the approval card never
+  // renders until a manual thread switch re-fetches history.
+  //
+  // Bridge it by reading thread state directly once the stream settles: while
+  // the run is still pending (`next` non-empty) but no live interrupt is shown,
+  // poll a BOUNDED number of times until the interrupt is persisted, then
+  // surface BOTH the interrupt and that snapshot's messages. Stops as soon as
+  // the interrupt is found or the run is truly done (`next` empty); a new run
+  // (isLoading→true) clears it. Not an unbounded poll — that would race the
+  // live stream and revive resolved interrupts.
+  const [fetchedInterrupt, setFetchedInterrupt] =
+    useState<typeof stream.interrupt>(undefined);
+  // Content key of an interrupt the server confirmed RESOLVED. The getter
+  // suppresses a stale `stream.interrupt` (e.g. one re-surfaced from SDK history
+  // after approving) ONLY when it matches this key — so a genuinely new
+  // interrupt is never hidden (the old global-null sentinel hid everything).
+  const [resolvedInterruptKey, setResolvedInterruptKey] = useState<
+    string | null
+  >(null);
+  const [fetchedMessages, setFetchedMessages] = useState<Message[] | null>(
+    null
+  );
+  const [fetchedThreadId, setFetchedThreadId] = useState<string | null>(null);
+  const recoveryRunRef = useRef(0);
+
+  // Per-thread model override. When set, gets folded into
+  // `configurable.model` on every `stream.submit` — the backend's
+  // `configurable_model` middleware
+  // (imaging_scientist/middleware/configurable_model.py) is what actually swaps
+  // the chat model per request.
+  //
+  // The persistence dance gets a wrinkle for fresh chats: the thread row
+  // doesn't exist server-side until the first `stream.submit` creates it,
+  // so we can't write `model_override` into thread metadata yet. We stash
+  // any pre-thread pick in `pendingOverrideRef`, fold it into the first
+  // run's config via `buildRunConfig`, and write it through to metadata
+  // when `threadId` actually shows up. Without this, the user's first
+  // message goes to the deployment default even after they picked a model
+  // from the empty composer.
+  const [modelOverride, setModelOverrideState] = useState<ModelOverride | null>(
+    null
+  );
+  const pendingOverrideRef = useRef<ModelOverride | null>(null);
+  useEffect(() => {
+    if (!threadId) {
+      // Don't clobber a pending pre-thread override — `buildRunConfig` still
+      // needs to read it for the first send.
+      if (!pendingOverrideRef.current) setModelOverrideState(null);
+      return;
+    }
+    // Thread just came into existence (or we switched onto an existing one).
+    // If we have a pending pre-thread override, write it through to metadata
+    // and keep the local state as-is. Otherwise fetch the thread's persisted
+    // override and seed local state from it.
+    if (pendingOverrideRef.current) {
+      const pending = pendingOverrideRef.current;
+      pendingOverrideRef.current = null;
+      void (async () => {
+        try {
+          await setThreadModelOverride(threadId, pending);
+        } catch {
+          // The local state still reflects the pick; the next `setModelOverride`
+          // call (or thread reopen) gets another chance to persist it.
+        }
+      })();
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const t = (await client.threads.get(threadId)) as {
+          metadata?: Record<string, unknown>;
+        };
+        if (cancelled) return;
+        const raw = (t.metadata ?? {})[MODEL_OVERRIDE_METADATA_KEY];
+        if (
+          raw &&
+          typeof raw === "object" &&
+          typeof (raw as { model?: unknown }).model === "string"
+        ) {
+          const r = raw as { model: string; model_provider?: unknown };
+          setModelOverrideState({
+            model: r.model,
+            model_provider:
+              typeof r.model_provider === "string"
+                ? r.model_provider
+                : undefined,
+          });
+        } else {
+          setModelOverrideState(null);
+        }
+      } catch {
+        if (!cancelled) setModelOverrideState(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [client, threadId]);
+
+  // Persist + apply locally. When the thread row exists, writes metadata
+  // first so a reload keeps the choice. Pre-thread (new chat with no
+  // threadId yet), stashes the override in a ref so the next send picks it
+  // up via `buildRunConfig` and the thread-id effect can persist it as soon
+  // as the row is created server-side.
+  const setModelOverride = useCallback(
+    async (next: ModelOverride | null) => {
+      setModelOverrideState(next);
+      if (!threadId) {
+        pendingOverrideRef.current = next;
+        return;
+      }
+      pendingOverrideRef.current = null;
+      await setThreadModelOverride(threadId, next);
+    },
+    [threadId]
+  );
+  useEffect(() => {
+    if (!threadId) {
+      setFetchedInterrupt(undefined);
+      setFetchedMessages(null);
+      setFetchedThreadId(null);
+      setResolvedInterruptKey(null);
+      return;
+    }
+    if (stream.isLoading) {
+      setRunFailure(null);
+      retryInFlightRef.current = false;
+      recoveryRunRef.current += 1;
+      setFetchedInterrupt(undefined);
+      setResolvedInterruptKey(null);
+      return;
+    }
+    // The live stream count at the moment it settled. If the server's persisted
+    // state has MORE messages than this, the stream ended early and dropped the
+    // tail — either the final assistant text, or the `execute` tool-call message
+    // plus its approval interrupt. Either way we backfill from thread state
+    // (the same data a thread-switch re-fetch would pull in).
+    const baseline = stream.messages.length;
+    const recoveryRunId = ++recoveryRunRef.current;
+    let cancelled = false;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const MAX_TRIES = 15;
+    const attempt = async () => {
+      tries += 1;
+      try {
+        const [state, threadRecord] = await Promise.all([
+          client.threads.getState(threadId) as Promise<{
+            tasks?: Array<{ interrupts?: unknown[]; name?: string; error?: unknown }>;
+            next?: unknown[];
+            values?: { messages?: Message[] };
+          }>,
+          client.threads.get(threadId) as Promise<{
+            values?: { messages?: Message[] };
+          }>,
+        ]);
+        if (cancelled || recoveryRunRef.current !== recoveryRunId) return;
+        const failure = checkpointFailure(state);
+        if (failure) {
+          setRunFailure({ threadId, ...failure });
+          setFetchedThreadId(threadId);
+          setFetchedMessages(pickThreadMessages(state.values?.messages, threadRecord.values?.messages));
+          return;
+        }
+        const msgs = pickThreadMessages(
+          state.values?.messages,
+          threadRecord.values?.messages
+        );
+        const pending = latestTaskInterrupt(state.tasks);
+        const stillPending = Array.isArray(state.next) && state.next.length > 0;
+        const safePending = normalizePendingInterrupt(pending);
+        if (safePending && hasActionableInterrupt(safePending)) {
+          // Tool-approval interrupt reached — surface it and its matching message
+          // snapshot together. Mixing live messages with fetched interrupts is the
+          // race that hides approval cards for repeated execute calls.
+          setFetchedInterrupt(
+            safePending as unknown as typeof stream.interrupt
+          );
+          setResolvedInterruptKey(null);
+          if (Array.isArray(msgs)) {
+            setFetchedThreadId(threadId);
+            setFetchedMessages(msgs);
+          }
+          return;
+        }
+        // Backfill only after the live stream is idle. During active streaming the
+        // live message list owns rendering; this recovery loop is for dropped tail
+        // state after the stream has settled.
+        if (Array.isArray(msgs) && msgs.length > baseline) {
+          setFetchedThreadId(threadId);
+          setFetchedMessages(msgs);
+        }
+        if (!stillPending) {
+          // A transport-level SSE timeout can call `onError` after the run has
+          // already completed server-side. The recovery snapshot is
+          // authoritative here: no checkpoint failure and no pending nodes
+          // means the transient stream error must not remain visible as a
+          // failed task.
+          setRunFailure(null);
+          // The server has no pending task/interrupt anymore. Record the stale
+          // live interrupt's identity so the getter suppresses ONLY that one
+          // (composer unlocks after approving) — a new interrupt still shows.
+          setFetchedInterrupt(undefined);
+          setResolvedInterruptKey(
+            interruptValueKey(coerceInterrupt(stream.interrupt))
+          );
+          if (Array.isArray(msgs)) {
+            setFetchedThreadId(threadId);
+            setFetchedMessages(msgs);
+          }
+          return;
+        }
+        // Keep polling only while the run is still working server-side; a
+        // finished run (next empty) won't produce anything more.
+        if (stillPending && tries < MAX_TRIES && !cancelled) {
+          timer = setTimeout(attempt, 1000);
+        }
+      } catch {
+        if (
+          !cancelled &&
+          recoveryRunRef.current === recoveryRunId &&
+          tries < MAX_TRIES
+        ) {
+          timer = setTimeout(attempt, 1000);
+        }
+      }
+    };
+    void attempt();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+    // Precise deps on purpose: re-running on the whole `stream` object (new each
+    // render) would loop the getState fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId, stream.interrupt, stream.isLoading, client, recoveryVersion]);
+
+  const liveInterrupt = coerceInterrupt(
+    stream.interrupt
+  ) as typeof stream.interrupt;
+  const interrupt =
+    fetchedThreadId === threadId && fetchedInterrupt
+      ? fetchedInterrupt
+      : liveInterrupt &&
+        (resolvedInterruptKey === null ||
+          interruptValueKey(liveInterrupt) !== resolvedInterruptKey)
+      ? liveInterrupt
+      : undefined;
+  // Prefer the backfilled snapshot when it is "ahead" of the live stream — i.e.
+  // the stream ended early and dropped the tail. "Ahead" means either MORE
+  // messages, or (once settled) the SAME number of messages but MORE total text:
+  // the final assistant turn often arrives as an empty/partial AI message with
+  // the right count but no content, so a pure length compare would keep showing
+  // the blank live version (the bug where the answer only appears after a manual
+  // refresh). The equal-count/more-text rule is gated on `!isLoading` so a
+  // mid-stream poll snapshot never flickers over the actively updating stream.
+  //
+  // Once the run has settled AND we have a snapshot, ALWAYS prefer the snapshot.
+  // `stream.messages` can carry subgraph noise (streamSubgraphs: true) plus
+  // stale per-message metadata from earlier runs, inflating its length above the
+  // persisted main-thread state. A pure `>` compare against that bloated count
+  // would keep us on the stream — which makes the downstream subgraph-namespace
+  // filter (ChatInterface.processedMessages) drop legitimate main-thread
+  // history that's only tagged subgraph in stale stream metadata.
+  const rawMessages = (() => {
+    if (!fetchedMessages || fetchedThreadId !== threadId)
+      return stream.messages;
+    if (fetchedInterrupt) return fetchedMessages;
+    if (!stream.isLoading) return fetchedMessages;
+    if (fetchedMessages.length > stream.messages.length) return fetchedMessages;
+    if (
+      fetchedMessages.length === stream.messages.length &&
+      totalTextLength(fetchedMessages) > totalTextLength(stream.messages)
+    ) {
+      return fetchedMessages;
+    }
+    return stream.messages;
+  })();
+  // Defer `messages` so token-stream bursts (per-token setStreamValues calls
+  // inside the SDK) become low-priority updates. React 19 coalesces rapid
+  // changes and delivers a single commit when the CPU catches up, instead of
+  // scheduling one render per SDK notify. Targets the residual max-update-
+  // depth trips at run tail, mid-run join on reload, and rapid parallel-tool
+  // interrupt bursts - all cases where the SDK emits setStreamValues faster
+  // than React can commit and the 1.9.3 RootMessageProjection coalescer
+  // doesn't cover (it only batches projection writes, not raw values).
+  // Downstream consumers (`processedMessages` memo, auto-report effect,
+  // ChatMessage render) see a slightly-lagged messages list under bursts, but
+  // the actual displayed content catches up within one animation frame in
+  // practice.
+  const messages = useDeferredValue(rawMessages);
+
+  // Model and credential selection is deployment-wide. Older thread metadata
+  // can contain a `model_override`, but it must not outlive a later change to
+  // the active Provider/Key pair in the WebUI.
+  const buildRunConfig = useCallback(() => {
+    const base = activeAssistant?.config ?? {};
+    const baseConfigurable =
+      (base as { configurable?: Record<string, unknown> }).configurable ?? {};
+    const configurable: Record<string, unknown> = { ...baseConfigurable };
+    delete configurable.model;
+    delete configurable.model_provider;
+    configurable.use_active_model = true;
+    return { ...base, configurable };
+  }, [activeAssistant?.config]);
+
+  const sendMessage = useCallback(
+    (content: string) => {
+      setRunFailure(null);
+      // Drop any settled-run snapshot up front. Otherwise, until `isLoading`
+      // flips true (and the effect above clears it), a previous run's
+      // `fetchedMessages` can still out-count `stream.messages` and shadow the
+      // just-added optimistic user message — making it flicker/vanish.
+      setFetchedInterrupt(undefined);
+      setFetchedMessages(null);
+      setFetchedThreadId(null);
+      setResolvedInterruptKey(null);
+      recoveryRunRef.current += 1;
+      const newMessage: Message = { id: uuidv4(), type: "human", content };
+      streamRef.current.submit(
+        { messages: [newMessage] },
+        {
+          optimisticValues: (prev) => ({
+            messages: [...(prev.messages ?? []), newMessage],
+          }),
+          config: buildRunConfig(),
+          streamSubgraphs: true,
+          streamMode: ["updates"],
+          streamResumable: true,
+          onDisconnect: "continue",
+        }
+      );
+      // Update thread list immediately when sending a message
+      onHistoryRevalidate?.();
+    },
+    [buildRunConfig, onHistoryRevalidate]
+  );
+
+  const setFiles = useCallback(
+    async (files: Record<string, string>) => {
+      if (!threadId) return;
+      // TODO: missing a way how to revalidate the internal state
+      // I think we do want to have the ability to externally manage the state
+      await client.threads.updateState(threadId, { values: { files } });
+    },
+    [client, threadId]
+  );
+
+  const resumeInterrupt = useCallback(
+    (value: any) => {
+      // Same as sendMessage: clear the prior snapshot before resuming so a stale
+      // fetchedInterrupt/fetchedMessages can't briefly re-surface a resolved
+      // approval card or shadow the resumed run's messages.
+      setFetchedInterrupt(undefined);
+      setFetchedMessages(null);
+      setFetchedThreadId(null);
+      setResolvedInterruptKey(null);
+      recoveryRunRef.current += 1;
+      streamRef.current.submit(null, {
+        command: { resume: value },
+        config: buildRunConfig(),
+        streamSubgraphs: true,
+        streamMode: ["updates"],
+        streamResumable: true,
+        onDisconnect: "continue",
+      });
+      // Update thread list when resuming from interrupt
+      onHistoryRevalidate?.();
+    },
+    [buildRunConfig, onHistoryRevalidate]
+  );
+
+  const retryFailedModel = useCallback(async () => {
+    if (!threadId || streamRef.current.isLoading || retryInFlightRef.current) return;
+    retryInFlightRef.current = true;
+    try {
+      // Recheck the checkpoint and thread immediately before resuming; another
+      // browser may have already started a run since the banner was displayed.
+      const [state, record] = await Promise.all([
+        client.threads.getState(threadId), client.threads.get(threadId),
+      ]);
+      if (activeThreadIdRef.current !== threadId || record.status === "busy" || !checkpointFailure(state)?.canRetry) return;
+      setRunFailure(null);
+      setFetchedMessages(null);
+      setFetchedThreadId(null);
+      recoveryRunRef.current += 1;
+      await streamRef.current.submit(null, {
+        config: buildRunConfig(),
+        streamSubgraphs: true,
+        streamMode: ["updates"],
+        streamResumable: true,
+        onDisconnect: "continue",
+        multitaskStrategy: "reject",
+      });
+    } catch (error) {
+      setRunFailure({ threadId, message: formatStreamError(error), canRetry: false });
+    } finally {
+      retryInFlightRef.current = false;
+      onHistoryRevalidate?.();
+    }
+  }, [threadId, client, buildRunConfig, onHistoryRevalidate]);
+
+  const stopStream = useCallback(() => {
+    // Stopping the browser-side SSE stream does not cancel the LangGraph run.
+    // The server can otherwise keep executing (and reconnectOnMount can revive
+    // it when this thread is opened again), leaving the conversation stuck in
+    // busy/running indefinitely. Cancel the persisted run as well as closing
+    // the local stream.
+    streamRef.current.stop();
+    const tid = activeThreadIdRef.current;
+    if (!tid) return;
+    void cancelActiveRuns(client as unknown as PendingTaskClient, tid)
+      .catch((error) => {
+        const message = `Could not stop the server run: ${formatStreamError(error)}`;
+        setRunFailure({ threadId: tid, message, canRetry: false });
+        toast.error(message);
+      })
+      .finally(() => onHistoryRevalidate?.());
+  }, [client, onHistoryRevalidate]);
+
+  const abandonTask = useCallback(async () => {
+    const tid = activeThreadIdRef.current;
+    if (!tid || abandoningRef.current) return;
+    abandoningRef.current = true;
+    setIsAbandoning(true);
+    try {
+      await abandonPendingTask(client as unknown as PendingTaskClient, tid);
+      if (activeThreadIdRef.current !== tid) return;
+      setFetchedInterrupt(undefined);
+      setResolvedInterruptKey(interruptValueKey(coerceInterrupt(streamRef.current.interrupt)));
+      setRunFailure(null);
+      setRecoveryVersion((version) => version + 1);
+      onHistoryRevalidate?.();
+    } catch (error) {
+      const message = `Could not abandon the task: ${formatStreamError(error)}`;
+      setRunFailure({ threadId: tid, message, canRetry: false });
+      toast.error(message);
+    } finally {
+      abandoningRef.current = false;
+      setIsAbandoning(false);
+    }
+  }, [client, onHistoryRevalidate]);
+
+  // Precompute the sidebar labels ("auto_title" + "preview") into thread
+  // metadata whenever a run settles, so the sidebar can render off metadata
+  // alone. Fires only on the loading -> idle transition (not per-token), then
+  // no-ops via `lastWrittenRef` if the values match what was already written
+  // in this session. The persist call itself also compares against server
+  // metadata before writing, so this is safe across tabs/reloads too.
+  //
+  // Pre-existing threads (with neither metadata key set) are self-healed by
+  // the sidebar fetcher in `useThreads` (fetched once, derived, written
+  // back), so they show the right labels even before they get a new turn.
+  // `scripts/backfill-thread-previews.mjs` remains as an optional bulk
+  // migration for repo checkouts.
+  const prevLoadingRef = useRef(false);
+  const lastWrittenRef = useRef<{
+    threadId: string;
+    autoTitle: string | null;
+    preview: string | null;
+  } | null>(null);
+  // `threadId` captured at each `isLoading` rising edge — the thread that
+  // owns the run. Persisting below is skipped when it no longer matches the
+  // current `threadId`, so an isLoading toggle during sidebar navigation
+  // can't write one thread's labels onto another. `null` means the run
+  // started pre-thread (new-chat first turn), a legitimate write.
+  const runStartThreadIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (stream.isLoading && !prevLoadingRef.current) {
+      runStartThreadIdRef.current = threadId;
+    }
+    const wasLoading = prevLoadingRef.current;
+    prevLoadingRef.current = stream.isLoading;
+    if (!wasLoading || stream.isLoading || !threadId) return;
+    const start = runStartThreadIdRef.current;
+    if (start !== null && start !== threadId) return;
+    const derived = deriveThreadMetadata(messages);
+    if (!derived.autoTitle && !derived.preview) return;
+    const last = lastWrittenRef.current;
+    if (
+      last &&
+      last.threadId === threadId &&
+      last.autoTitle === derived.autoTitle &&
+      last.preview === derived.preview
+    ) {
+      return;
+    }
+    void persistThreadDerivedMetadata(threadId, derived)
+      .then(() => {
+        // Mark as written only on success so a transient failure retries on
+        // the next idle transition (the derived values rarely change, so a
+        // pre-write mark would suppress retries for the whole session).
+        lastWrittenRef.current = { threadId, ...derived };
+        onHistoryRevalidate?.();
+      })
+      .catch(() => {
+        // Non-critical: sidebar label stays stale; retried next turn.
+      });
+  }, [stream.isLoading, threadId, messages, onHistoryRevalidate]);
+
+  return {
+    stream,
+    todos: stream.values.todos ?? [],
+    files: stream.values.files ?? {},
+    email: stream.values.email,
+    asyncTasks: stream.values.async_tasks ?? {},
+    summarizationEvent: parseSummarizationEvent(
+      stream.values._summarization_event
+    ),
+    ui: stream.values.ui,
+    setFiles,
+    messages,
+    isLoading: stream.isLoading,
+    isThreadLoading: stream.isThreadLoading,
+    runFailure: runFailure?.threadId === threadId ? runFailure : null,
+    retryFailedModel,
+    interrupt,
+    sendMessage,
+    stopStream,
+    abandonTask,
+    isAbandoning,
+    resumeInterrupt,
+    dynamicWorkflows,
+    modelOverride,
+    setModelOverride,
+  };
+}

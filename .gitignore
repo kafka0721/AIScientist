@@ -1,0 +1,42 @@
+# Local environments and application state
+.venv/
+.local-home/
+.imaging-scientist-runtime/
+.langgraph_api/
+.workbuddy-ai/
+user-config/
+
+# Experiment and submission material kept only on this machine
+/data/
+/docs/
+/experiments/
+/paper/
+/report_materials_20261011/
+/submission_docs/
+/submission_docs.zip
+/*.pptx
+/*.txt
+
+# Generated results and caches
+artifacts/
+output/
+tmp/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+__pycache__/
+*.py[cod]
+*.log
+
+# Local credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
